@@ -22,7 +22,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -51,7 +54,6 @@ import com.google.common.hash.HashingOutputStream;
 import org.joda.time.DateTime;
 
 import static java.util.Collections.singletonList;
-import static java.util.stream.Collectors.toMap;
 import static org.sonatype.nexus.common.app.VersionComparator.version;
 import static org.sonatype.nexus.repository.maven.internal.Attributes.P_BASE_VERSION;
 import static org.sonatype.nexus.repository.maven.internal.Constants.SNAPSHOT_VERSION_SUFFIX;
@@ -265,5 +267,33 @@ public final class MavenFacetUtils
       paths.add(mavenPath.main().hash(hashType));
     }
     return mavenFacet.delete(paths.toArray(new MavenPath[paths.size()]));
+  }
+
+  /**
+   * Performs a {@link MavenFacet#delete(MavenPath...)} for passed in list of {@link MavenPath} and all hashes
+   *
+   * @since 3.14
+   */
+  public static void deleteWithHashes(final MavenFacet mavenFacet, final List<MavenPath> mavenPaths) throws IOException {
+    final ArrayList<MavenPath> paths = new ArrayList<>();
+    for (MavenPath path : mavenPaths) {
+      paths.add(path.main());
+      for (HashType hashType : HashType.values()) {
+        paths.add(path.main().hash(hashType));
+      }
+    }
+    mavenFacet.delete(paths.toArray(new MavenPath[paths.size()]));
+  }
+
+  /**
+   * @return a collection of path of a given {@link MavenPath} and it's hashes' paths
+   */
+  public static Set<String> getPathWithHashes(final MavenPath mavenPath) {
+    Set<String> paths = new HashSet<>();
+    paths.add(mavenPath.main().getPath());
+    for (HashType hashType : HashType.values()) {
+      paths.add(mavenPath.main().hash(hashType).getPath());
+    }
+    return paths;
   }
 }

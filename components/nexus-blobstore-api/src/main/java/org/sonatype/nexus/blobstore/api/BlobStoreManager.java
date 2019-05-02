@@ -12,6 +12,8 @@
  */
 package org.sonatype.nexus.blobstore.api;
 
+import java.util.Optional;
+
 import javax.annotation.Nullable;
 
 import org.sonatype.goodies.lifecycle.Lifecycle;
@@ -40,6 +42,13 @@ public interface BlobStoreManager
   BlobStore create(BlobStoreConfiguration blobStoreConfiguration) throws Exception;
 
   /**
+   * Update an existing BlobStore
+   *
+   * @since 3.14
+   */
+  BlobStore update(BlobStoreConfiguration blobStoreConfiguration) throws Exception;
+
+  /**
    * Lookup a BlobStore by name
    */
   @Nullable
@@ -51,10 +60,41 @@ public interface BlobStoreManager
   void delete(String name) throws Exception;
 
   /**
+   * Delete a BlobStore by name, even if it is use.
+   *
+   * @since 3.14
+   */
+  void forceDelete(String name) throws Exception;
+
+  /**
    * Returns true if a blob store with the provided name already exists. Check is case-insensitive.
    *
    * @since 3.1
    */
   boolean exists(String name);
 
+  /**
+   * Returns the number of other blob stores that use the named blob store.
+   *
+   * @since 3.14
+   */
+  long blobStoreUsageCount(String blobStoreName);
+
+  /**
+   * Returns true if the blob store is promotable
+   * @param blobStoreName
+   * @return true if member is promotable
+   *
+   * @since 3.15
+   */
+  boolean isPromotable(String blobStoreName);
+
+  /**
+   * Returns the parent group of the blob store if it exists
+   * @param blobStoreName
+   * @return {@link java.util.Optional<String>} containing the parent group name if it exists
+   *
+   * @since 3.15
+   */
+  Optional<String> getParent(String blobStoreName);
 }

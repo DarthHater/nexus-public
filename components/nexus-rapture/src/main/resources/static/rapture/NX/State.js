@@ -35,16 +35,6 @@ Ext.define('NX.State', {
     var me = this;
 
     me.mixins.observable.constructor.call(me, config);
-
-    me.addEvents(
-        /**
-         * Fires when any of application context values changes.
-         *
-         * @event changed
-         * @param {NX.State} this
-         */
-        'changed'
-    );
   },
 
   /**
@@ -199,6 +189,14 @@ Ext.define('NX.State', {
     return this.getValue('receiving');
   },
 
+  /**
+   * Return whether or not the NXRM instance is a HA-C
+   */
+  isClustered: function() {
+    return NX.app.Application.bundleActive('com.sonatype.nexus.plugins.nexus-hazelcast-plugin') &&
+        this.getValue('nodes', {})['enabled'];
+  },
+
   getValue: function (key, defaultValue) {
     return this.controller().getValue(key, defaultValue);
   },
@@ -209,6 +207,10 @@ Ext.define('NX.State', {
 
   setValues: function (values) {
     this.controller().setValues(values);
+  },
+
+  refreshNow: function() {
+    this.controller().refreshNow();
   },
 
   /**

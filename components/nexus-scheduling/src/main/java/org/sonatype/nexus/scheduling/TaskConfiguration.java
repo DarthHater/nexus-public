@@ -53,7 +53,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
  *
  * @since 3.0
  */
-public final class TaskConfiguration
+public class TaskConfiguration
     implements TaskLogInfo
 {
   // TODO: keys which start with "." are considered "private" for some strange reason
@@ -77,6 +77,8 @@ public final class TaskConfiguration
   private static final String UPDATED_KEY = ".updated";
 
   private static final String MESSAGE_KEY = ".message";
+
+  private static final String REQUEST_RECOVERY = ".recoverable";
 
   private final Map<String, String> configuration;
 
@@ -229,6 +231,14 @@ public final class TaskConfiguration
     else {
       configuration.put(MESSAGE_KEY, message);
     }
+  }
+
+  public boolean isRecoverable() {
+    return getBoolean(REQUEST_RECOVERY, false);
+  }
+
+  public void setRecoverable(final boolean requestRecovery) {
+    configuration.put(REQUEST_RECOVERY, Boolean.toString(requestRecovery));
   }
 
   //

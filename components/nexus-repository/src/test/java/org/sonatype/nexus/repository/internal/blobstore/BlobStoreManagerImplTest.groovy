@@ -15,11 +15,13 @@ package org.sonatype.nexus.repository.internal.blobstore
 import javax.inject.Provider
 
 import org.sonatype.goodies.testsupport.TestSupport
+import org.sonatype.nexus.blobstore.BlobStoreDescriptor
 import org.sonatype.nexus.blobstore.api.BlobStore
 import org.sonatype.nexus.blobstore.api.BlobStoreConfiguration
 import org.sonatype.nexus.common.event.EventManager
 import org.sonatype.nexus.common.node.NodeAccess
 import org.sonatype.nexus.orient.freeze.DatabaseFreezeService
+import org.sonatype.nexus.repository.manager.RepositoryManager
 
 import com.google.common.collect.Lists
 import org.hamcrest.Matchers
@@ -31,6 +33,7 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mock
 
 import static org.hamcrest.MatcherAssert.assertThat
+import static org.hamcrest.Matchers.notNullValue
 import static org.junit.Assert.fail
 import static org.mockito.ArgumentCaptor.forClass
 import static org.mockito.Matchers.any
@@ -58,10 +61,16 @@ class BlobStoreManagerImplTest
   BlobStoreConfigurationStore store
   
   @Mock
+  BlobStoreDescriptor descriptor
+
+  @Mock
   Provider<BlobStore> provider
 
   @Mock
   DatabaseFreezeService databaseFreezeService
+
+  @Mock
+  RepositoryManager repositoryManager
 
   @Mock
   NodeAccess nodeAccess
@@ -73,9 +82,10 @@ class BlobStoreManagerImplTest
     underTest = newBlobStoreManager()
   }
 
-  private BlobStoreManagerImpl newBlobStoreManager(boolean provisionDefaults = false) {
-    spy(new BlobStoreManagerImpl(eventManager, store, [test: provider, File: provider],
-        databaseFreezeService, nodeAccess, provisionDefaults))
+  private BlobStoreManagerImpl newBlobStoreManager(Boolean provisionDefaults = null) {
+    spy(new BlobStoreManagerImpl(eventManager, store, [test: descriptor, File: descriptor],
+        [test: provider, File: provider], databaseFreezeService, { -> repositoryManager } as Provider,
+         nodeAccess, provisionDefaults))
   }
 
   @Test
@@ -111,6 +121,17 @@ class BlobStoreManagerImplTest
 
     verify(store).create(configurationArgumentCaptor.capture())
     assertThat(configurationArgumentCaptor.getValue().name, Matchers.is(DEFAULT_BLOBSTORE_NAME))
+  }
+
+  @Test
+  void 'Can skip creating default blobstore when non-clustered if provisionDefaults is false'() {
+    underTest = newBlobStoreManager(false)
+
+    when(nodeAccess.isClustered()).thenReturn(false)
+    when(store.list()).thenReturn(Lists.newArrayList())
+    underTest.doStart()
+
+    verify(store, times(0)).create(any(BlobStoreConfiguration.class))
   }
 
   @Test
@@ -197,10 +218,10 @@ class BlobStoreManagerImplTest
   }
 
   @Test
-  void 'Can successfullly create new blob stores concurrently'() {
+  void 'Can successfully create new blob stores concurrently'() {
     // avoid newBlobStoreManager method because it returns a spy that throws NPE accessing the stores field
-    underTest = new BlobStoreManagerImpl(eventManager, store, [test: provider, File: provider],
-        databaseFreezeService, nodeAccess, true)
+    underTest = new BlobStoreManagerImpl(eventManager, store, [test: descriptor, File: descriptor],
+        [test: provider, File: provider], databaseFreezeService, { -> repositoryManager } as Provider, nodeAccess, true)
 
     BlobStore blobStore = mock(BlobStore)
     when(provider.get()).thenReturn(blobStore)
@@ -215,6 +236,79 @@ class BlobStoreManagerImplTest
     underTest.create(createConfig(name: 'concurrency-test-3'))
     // this method will throw ConcurrentModificationException if the internal store isn't thread-safe
     storesIterator.next()
+  }
+
+  @Test(expected = IllegalStateException.class)
+  void 'In use blobstore cannot be deleted'() {
+    BlobStore used = mock(BlobStore)
+    BlobStore unused = mock(BlobStore)
+    underTest.track('used', used)
+    underTest.track('unused', unused)
+    when(repositoryManager.isBlobstoreUsed('used')).thenReturn(true)
+    when(repositoryManager.isBlobstoreUsed('unused')).thenReturn(false)
+
+    try {
+      underTest.delete('unused')
+      underTest.delete('used')
+    }
+    finally {
+      verify(unused, times(1)).remove()
+      verify(used, times(0)).remove()
+    }
+  }
+
+  @Test
+  void 'It is promotable when the store finds no parents and the blob store is groupable'() {
+    def blobStoreName = 'child'
+    def blobStore = mock(BlobStore)
+    underTest.track(blobStoreName, blobStore)
+    when(blobStore.isGroupable()).thenReturn(true)
+    when(blobStore.isWritable()).thenReturn(true)
+    when(blobStore.getBlobStoreConfiguration()).thenReturn(new BlobStoreConfiguration(name: blobStoreName))
+    when(store.findParent(blobStoreName)).thenReturn(Optional.empty())
+    assert underTest.isPromotable(blobStoreName)
+  }
+
+  @Test
+  void 'It is not promotable when the store finds parents'() {
+    def blobStoreName = 'child'
+    def blobStore = mock(BlobStore)
+    when(blobStore.isGroupable()).thenReturn(true)
+    when(blobStore.getBlobStoreConfiguration()).thenReturn(new BlobStoreConfiguration(name: blobStoreName))
+    when(store.findParent(blobStoreName)).thenReturn(Optional.of(new BlobStoreConfiguration()))
+    assert !underTest.isPromotable(blobStoreName)
+  }
+
+  @Test
+  void 'It is not promotable when the store is not groupable'() {
+    def blobStoreName = 'child'
+    def blobStore = mock(BlobStore)
+    when(blobStore.isGroupable()).thenReturn(false)
+    when(blobStore.getBlobStoreConfiguration()).thenReturn(new BlobStoreConfiguration(name: blobStoreName))
+    when(store.findParent(blobStoreName)).thenReturn(Optional.empty())
+    assert !underTest.isPromotable(blobStoreName)
+  }
+
+  @Test
+  void 'Can start when a blob store fails to restore'() {
+    BlobStore blobStore = mock(BlobStore)
+    when(blobStore.init(any(BlobStoreConfiguration.class))).thenThrow(new IllegalStateException())
+    when(provider.get()).thenReturn(blobStore)
+    when(store.list()).thenReturn(Lists.newArrayList(createConfig('test')))
+
+    underTest.doStart()
+    assertThat('blob store manager should still track blob stores that failed on startup', underTest.get('test'),
+        notNullValue())
+  }
+
+  @Test
+  void 'Can start when a blob store fails to start'() {
+    BlobStore blobStore = mock(BlobStore)
+    when(blobStore.start()).thenThrow(new IllegalStateException())
+    when(provider.get()).thenReturn(blobStore)
+    when(store.list()).thenReturn(Lists.newArrayList(createConfig('test')))
+    underTest.doStart()
+    assert underTest.browse().toList() == [blobStore]
   }
 
   private BlobStoreConfiguration createConfig(name = 'foo', type = 'test', attributes = [file:[path:'baz']]) {

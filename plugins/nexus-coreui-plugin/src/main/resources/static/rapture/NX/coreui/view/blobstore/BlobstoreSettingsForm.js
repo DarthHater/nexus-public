@@ -25,10 +25,6 @@ Ext.define('NX.coreui.view.blobstore.BlobstoreSettingsForm', {
     'NX.I18n'
   ],
 
-  api: {
-    submit: 'NX.direct.coreui_Blobstore.update'
-  },
-
   initComponent: function() {
     var me = this;
 
@@ -38,7 +34,13 @@ Ext.define('NX.coreui.view.blobstore.BlobstoreSettingsForm', {
 
     me.editableMarker = NX.I18n.get('Blobstore_BlobstoreSettingsForm_Update_Error');
 
-    me.editableCondition = me.editableCondition || NX.Conditions.never();
+    me.editableCondition = me.editableCondition || NX.Conditions.and(
+        NX.Conditions.isPermitted('nexus:blobstores:update'),
+        NX.Conditions.formHasRecord('nx-coreui-blobstore-settings-form', function(model) {
+          var blobstoreTypeModel = NX.getApplication().getStore('BlobstoreType').getById(model.data.type);
+          return blobstoreTypeModel.data.isModifiable;
+        })
+    );
 
     me.items = [
       {
@@ -53,8 +55,15 @@ Ext.define('NX.coreui.view.blobstore.BlobstoreSettingsForm', {
         displayField: 'name',
         valueField: 'id',
         readOnly: true,
-        onChange: function(value) {
+        onChange: function(newValue, oldValue) {
+          var comboxBox = this;
           var settingsFieldSet = me.down('nx-coreui-formfield-settingsfieldset');
+          var value = newValue || oldValue;
+          if (!newValue) {
+            comboxBox.setValue(value);
+            comboxBox.originalValue = value;
+            comboxBox.validate();
+          }
           var blobstoreTypeModel = NX.getApplication().getStore('BlobstoreType').getById(value);
           settingsFieldSet.importProperties(null, blobstoreTypeModel.get('formFields'), me.editableCondition);
         }
@@ -66,10 +75,51 @@ Ext.define('NX.coreui.view.blobstore.BlobstoreSettingsForm', {
         fieldLabel: NX.I18n.get('Blobstore_BlobstoreSettingsForm_Name_FieldLabel'),
         readOnly: true
       },
-      { xtype: 'nx-coreui-formfield-settingsfieldset' }
+      {
+        xtype: 'checkbox',
+        name: 'isQuotaEnabled',
+        itemId: 'isQuotaEnabled',
+        boxLabel: NX.I18n.get('Blobstore_BlobstoreSettingsForm_EnableSoftQuota_FieldLabel'),
+        readOnly: true,
+        listeners: {
+          change: function(checkbox, newValue) {
+            me.toggleQuotaParamVisibility(newValue);
+          }
+        }
+      },
+      {
+        xtype: 'combo',
+        name: 'quotaType',
+        itemId: 'quotaType',
+        fieldLabel: NX.I18n.get('Blobstore_BlobstoreSettingsForm_QuotaType_FieldLabel'),
+        editable: false,
+        store: 'BlobStoreQuotaType',
+        queryMode: 'local',
+        displayField: 'name',
+        valueField: 'id',
+        readOnly: true
+      },
+      {
+        xtype: 'numberfield',
+        name: 'quotaLimit',
+        itemId: 'quotaLimit',
+        fieldLabel: NX.I18n.get('Blobstore_BlobstoreSettingsForm_QuotaLimit_FieldLabel'),
+        minValue: 1,
+        allowDecimals: false,
+        allowExponential: true,
+        readOnly: true
+      },
+      {
+        xtype: 'nx-coreui-formfield-settingsfieldset',
+        delimiter: null,
+        disableSort: true
+      }
     ];
 
     me.callParent();
+
+    var isQuotaEnabledField = me.down('#isQuotaEnabled');
+    me.toggleQuotaParamVisibility(isQuotaEnabledField !== null && isQuotaEnabledField.value);
 
     //map repository attributes raw map structure to/from a flattened representation
     Ext.override(me.getForm(), {
@@ -89,7 +139,86 @@ Ext.define('NX.coreui.view.blobstore.BlobstoreSettingsForm', {
           }
         }
         this.callParent(arguments);
+
+        if (type === 'group') {
+          me.filterGroupStore(values['name'], values);
+        }
       }
     });
+  },
+  /**
+   * @private
+   */
+  toggleQuotaParamVisibility: function(value) {
+    var me = this,
+        form = me.up('form');
+    var quotaTypeField = me.down('#quotaType');
+    quotaTypeField.setVisible(value);
+    quotaTypeField.setDisabled(!value);
+
+    var quotaLimitField = me.down('#quotaLimit');
+    quotaLimitField.setVisible(value);
+    quotaLimitField.setDisabled(!value);
+
+    if (form && form.rendered) {
+      form.isValid();
+    }
+  },
+  /**
+   * @private
+   */
+  filterGroupStore: function(selectedBlobStoreName, values) {
+    var me = this,
+        members = me.down('nx-coreui-formfield-settingsfieldset').down('nx-itemselector'),
+        membersValue = values['property_members'];
+
+    if (!members || !membersValue || members.name !== 'property_members') {
+      return;
+    }
+
+    members.getStore().load({
+      params: {
+        filter: [{property: 'blobStoreName', value: selectedBlobStoreName}]
+      },
+      callback: function() {
+        members.suspendEvents();
+        members.setValue(membersValue);
+        members.validateValue();
+        members.resumeEvents();
+      }
+    });
+  },
+
+  setEditable: function(editable) {
+    var me = this;
+
+    if (editable || !NX.Permissions.check('nexus:blobstores:update')) {
+      me.quotaFieldsReadOnly(false);
+      NX.getApplication().getController('Blobstores').showWarning(
+          NX.I18n.format('Blobstore_BlobstoreFeature_Editing_Enabled_Message'));
+      me.callParent(arguments);
+    }
+    else {
+      me.quotaFieldsReadOnly(true);
+
+      //if the form has any fields
+      if (me.items != null) {
+        //then grab all of the dynamically generated fields and make them non-editable
+        var itemsToDisable = me.getChildItemsToDisable().filter(function(item) {
+          return item.ownerCt.xtype === 'nx-coreui-formfield-settingsfieldset';
+        });
+
+        me.setItemsEditable(false, itemsToDisable);
+      }
+    }
+  },
+
+  quotaFieldsReadOnly: function(readOnly) {
+    var me = this;
+    if (me.items) {
+      Ext.Array.forEach(['#isQuotaEnabled', '#quotaType', '#quotaLimit'], function(f) {
+        me.down(f).setReadOnly(readOnly);
+      });
+    }
   }
 });

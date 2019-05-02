@@ -18,6 +18,7 @@ import java.security.SecureRandom
 import org.sonatype.goodies.testsupport.TestSupport
 import org.sonatype.goodies.testsupport.junit.TestDataRule
 import org.sonatype.nexus.common.app.ApplicationDirectories
+import org.sonatype.nexus.common.event.EventManager
 import org.sonatype.nexus.common.node.NodeAccess
 import org.sonatype.nexus.elasticsearch.internal.ClientProvider
 import org.sonatype.nexus.elasticsearch.internal.NodeProvider
@@ -46,6 +47,7 @@ import static com.google.common.collect.DiscreteDomain.integers
 import static com.jayway.awaitility.Awaitility.await
 import static java.util.concurrent.TimeUnit.MINUTES
 import static org.elasticsearch.index.query.QueryBuilders.boolQuery
+import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery
 import static org.elasticsearch.index.query.QueryBuilders.queryStringQuery
 import static org.hamcrest.Matchers.is
 import static org.junit.Assert.assertThat
@@ -57,6 +59,8 @@ class SearchServiceImplIT
     extends TestSupport
 {
   static final String BASEDIR = new File(System.getProperty('basedir', '')).absolutePath
+
+  private static final int CALM_TIMEOUT = 3000
 
   @Rule
   public TestDataRule testData = new TestDataRule(Paths.get(BASEDIR, 'src/test/it-resources').toFile())
@@ -89,6 +93,9 @@ class SearchServiceImplIT
   @Mock
   SearchSubjectHelper searchSubjectHelper
 
+  @Mock
+  EventManager eventManager
+
   SearchServiceImpl searchService
 
   def repositories = []
@@ -110,7 +117,7 @@ class SearchServiceImplIT
     ClientProvider clientProvider = new ClientProvider(nodeProvider)
 
     searchService = new SearchServiceImpl(clientProvider, repositoryManager, securityHelper, searchSubjectHelper,
-        ImmutableList.of(), false, 1000, 1, 0)
+        ImmutableList.of(), eventManager, false, 1000, 1, 0, CALM_TIMEOUT)
 
     when(repositoryConfig.isOnline()).thenReturn(true)
     when(testFormat.getValue()).thenReturn('test-format')
@@ -170,6 +177,25 @@ class SearchServiceImplIT
         assertThat(Iterables.size(searchService.browseUnrestricted(exampleQuery)), is(0)) })
   }
 
+  @Test
+  public void searchResultsArePaged() throws Exception {
+    seedComponentIndex()
+
+    def query = boolQuery()
+        .must(matchAllQuery())
+
+    def repos = repositories.stream().map { it.name }.collect()
+    def searchResponse = searchService.searchUnrestrictedInRepos(query, null, 0, 2, repos)
+
+    assert searchResponse.hits.size() == 2
+
+    def secondPage = searchService.searchUnrestrictedInRepos(query, null, 2, 4, repos)
+
+    assert secondPage.hits.size() == 4
+    assert !searchResponse.hits.contains(secondPage.hits[0])
+    assert !searchResponse.hits.contains(secondPage.hits[1])
+  }
+
   private seedComponentIndex() {
     Random random = new SecureRandom()
 
@@ -178,7 +204,7 @@ class SearchServiceImplIT
         componentsByRepository.put(repositories[random.nextInt(TEST_REPOSITORY_COUNT)], component) })
 
     // populate each index using bulk operations
-    componentsByRepository.keys().forEach({ repository ->
+    componentsByRepository.keySet().forEach({ repository ->
       searchService.bulkPut(
           repository,
           componentsByRepository.get(repository),

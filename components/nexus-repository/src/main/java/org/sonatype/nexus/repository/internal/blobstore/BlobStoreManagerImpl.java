@@ -14,7 +14,8 @@ package org.sonatype.nexus.repository.internal.blobstore;
 
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
+import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
@@ -22,19 +23,25 @@ import javax.inject.Named;
 import javax.inject.Provider;
 import javax.inject.Singleton;
 
+import org.sonatype.nexus.blobstore.BlobStoreDescriptor;
 import org.sonatype.nexus.blobstore.api.BlobStore;
 import org.sonatype.nexus.blobstore.api.BlobStoreConfiguration;
 import org.sonatype.nexus.blobstore.api.BlobStoreCreatedEvent;
 import org.sonatype.nexus.blobstore.api.BlobStoreDeletedEvent;
+import org.sonatype.nexus.blobstore.api.BlobStoreException;
 import org.sonatype.nexus.blobstore.api.BlobStoreManager;
+import org.sonatype.nexus.blobstore.api.BlobStoreUpdatedEvent;
 import org.sonatype.nexus.blobstore.file.FileBlobStoreConfigurationBuilder;
 import org.sonatype.nexus.common.event.EventAware;
+import org.sonatype.nexus.common.event.EventConsumer;
+import org.sonatype.nexus.common.event.EventHelper;
 import org.sonatype.nexus.common.event.EventManager;
 import org.sonatype.nexus.common.node.NodeAccess;
 import org.sonatype.nexus.common.stateguard.Guarded;
 import org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport;
 import org.sonatype.nexus.jmx.reflect.ManagedObject;
 import org.sonatype.nexus.orient.freeze.DatabaseFreezeService;
+import org.sonatype.nexus.repository.manager.RepositoryManager;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
@@ -43,6 +50,7 @@ import com.google.common.eventbus.Subscribe;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Optional.empty;
 import static org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport.State.STARTED;
 
 /**
@@ -63,34 +71,47 @@ public class BlobStoreManagerImpl
 
   private final BlobStoreConfigurationStore store;
 
-  private final Map<String, Provider<BlobStore>> blobstorePrototypes;
+  private final Map<String, BlobStoreDescriptor> blobStoreDescriptors;
+
+  private final Map<String, Provider<BlobStore>> blobStorePrototypes;
 
   private final DatabaseFreezeService databaseFreezeService;
 
-  private final NodeAccess nodeAccess;
+  private final BooleanSupplier provisionDefaults;
 
-  private final boolean provisionDefaults;
+  private final Provider<RepositoryManager> repositoryManagerProvider;
 
   @Inject
-  public BlobStoreManagerImpl(final EventManager eventManager,
+  public BlobStoreManagerImpl(final EventManager eventManager, //NOSONAR
                               final BlobStoreConfigurationStore store,
-                              Map<String, Provider<BlobStore>> blobstorePrototypes,
+                              final Map<String, BlobStoreDescriptor> blobStoreDescriptors,
+                              final Map<String, Provider<BlobStore>> blobStorePrototypes,
                               final DatabaseFreezeService databaseFreezeService,
+                              final Provider<RepositoryManager> repositoryManagerProvider,
                               final NodeAccess nodeAccess,
-                              @Named("${nexus.blobstore.provisionDefaults:-false}") final boolean provisionDefaults)
+                              @Nullable @Named("${nexus.blobstore.provisionDefaults}") final Boolean provisionDefaults)
   {
     this.eventManager = checkNotNull(eventManager);
     this.store = checkNotNull(store);
-    this.blobstorePrototypes = checkNotNull(blobstorePrototypes);
+    this.blobStoreDescriptors = checkNotNull(blobStoreDescriptors);
+    this.blobStorePrototypes = checkNotNull(blobStorePrototypes);
     this.databaseFreezeService = checkNotNull(databaseFreezeService);
-    this.nodeAccess = checkNotNull(nodeAccess);
-    this.provisionDefaults = provisionDefaults;
+    this.repositoryManagerProvider = checkNotNull(repositoryManagerProvider);
+
+    if (provisionDefaults != null) {
+      // explicit true/false setting, so honour that
+      this.provisionDefaults = provisionDefaults::booleanValue;
+    }
+    else {
+      // otherwise only create in non-clustered mode
+      this.provisionDefaults = () -> !nodeAccess.isClustered();
+    }
   }
 
   @Override
   protected void doStart() throws Exception {
     List<BlobStoreConfiguration> configurations = store.list();
-    if (configurations.isEmpty() && (provisionDefaults || !nodeAccess.isClustered())) {
+    if (configurations.isEmpty() && provisionDefaults.getAsBoolean()) {
       log.debug("No BlobStores configured; provisioning default BlobStore");
       store.create(new FileBlobStoreConfigurationBuilder(DEFAULT_BLOBSTORE_NAME).build());
       configurations = store.list();
@@ -99,16 +120,33 @@ public class BlobStoreManagerImpl
     log.debug("Restoring {} BlobStores", configurations.size());
     for (BlobStoreConfiguration configuration : configurations) {
       log.debug("Restoring BlobStore: {}", configuration);
-      BlobStore blobStore = newBlobStore(configuration);
-      track(configuration.getName(), blobStore);
+      BlobStore blobStore = null;
+
+      try {
+        blobStore = blobStorePrototypes.get(configuration.getType()).get();
+        blobStore.init(configuration);
+      }
+      catch (Exception e) {
+        log.error("Unable to restore BlobStore {}", configuration, e);
+      }
+      finally {
+        track(configuration.getName(), blobStore);
+      }
 
       // TODO - event publishing
     }
 
     log.debug("Starting {} BlobStores", stores.size());
-    for (BlobStore blobStore : stores.values()) {
-      log.debug("Starting BlobStore: {}", blobStore);
-      blobStore.start();
+    for (Map.Entry<String, BlobStore> entry : stores.entrySet()) {
+      String name = entry.getKey();
+      BlobStore blobStore = entry.getValue();
+      log.debug("Starting BlobStore: {}", name);
+      try {
+        blobStore.start();
+      }
+      catch (Exception e) {
+        log.error("Unable to start BlobStore {}", name, e);
+      }
 
       // TODO - event publishing
     }
@@ -146,15 +184,27 @@ public class BlobStoreManagerImpl
     checkNotNull(configuration);
     log.debug("Creating BlobStore: {} with attributes: {}", configuration.getName(),
         configuration.getAttributes());
+    BlobStoreDescriptor blobStoreDescriptor = blobStoreDescriptors.get(configuration.getType());
+    blobStoreDescriptor.sanitizeConfig(configuration);
+    blobStoreDescriptor.validateConfig(configuration);
 
-    BlobStore blobStore = newBlobStore(configuration);
+    BlobStore blobStore = blobStorePrototypes.get(configuration.getType()).get();
+    blobStore.init(configuration);
 
-    try {
-      store.create(configuration);
-    }
-    catch (Exception e) {
-      blobStore.remove();
-      throw e;
+    if (!EventHelper.isReplicating()) {
+      try {
+        store.create(configuration);
+      }
+      catch (Exception e) {
+        try {
+          blobStore.remove();
+        }
+        catch (Exception removeException) {
+          // if an error occurs on remove log and rethrow original to avoid losing the root cause
+          log.error("Error removing BlobStore {} after create failed", configuration.getName(), removeException);
+        }
+        throw e;
+      }
     }
 
     track(configuration.getName(), blobStore);
@@ -162,6 +212,45 @@ public class BlobStoreManagerImpl
     blobStore.start();
 
     eventManager.post(new BlobStoreCreatedEvent(blobStore));
+
+    return blobStore;
+  }
+
+  @Override
+  @Guarded(by = STARTED)
+  public BlobStore update(final BlobStoreConfiguration configuration) throws Exception {
+    checkNotNull(configuration);
+
+    BlobStore blobStore = get(configuration.getName());
+    checkNotNull(blobStore);
+
+    log.debug("Updating BlobStore: {} with attributes: {}", configuration.getName(),
+        configuration.getAttributes());
+    BlobStoreDescriptor blobStoreDescriptor = blobStoreDescriptors.get(configuration.getType());
+    blobStoreDescriptor.validateConfig(configuration);
+
+    BlobStoreConfiguration currentConfig = blobStore.getBlobStoreConfiguration();
+
+    if (blobStore.isStarted()) {
+      blobStore.stop();
+    }
+
+    try {
+      blobStore.init(configuration);
+      blobStore.start();
+      if (!EventHelper.isReplicating()) {
+        store.update(configuration);
+      }
+      eventManager.post(new BlobStoreUpdatedEvent(blobStore));
+    } catch (Exception e) {
+      log.error("Failed to update configuration", e);
+      if (blobStore.isStarted()) {
+        blobStore.stop();
+      }
+      blobStore.init(currentConfig);
+      blobStore.start();
+      throw new BlobStoreException("Failed to start blob store with new configuration.", null);
+    }
 
     return blobStore;
   }
@@ -179,6 +268,18 @@ public class BlobStoreManagerImpl
   @Guarded(by = STARTED)
   public void delete(final String name) throws Exception {
     checkNotNull(name);
+    if (!repositoryManagerProvider.get().isBlobstoreUsed(name)) {
+      forceDelete(name);
+    }
+    else {
+      throw new IllegalStateException("BlobStore " + name + " is in use and cannot be deleted");
+    }
+  }
+
+  @Override
+  @Guarded(by = STARTED)
+  public void forceDelete(final String name) throws Exception {
+    checkNotNull(name);
     databaseFreezeService.checkUnfrozen("Unable to delete a BlobStore while database is frozen.");
 
     BlobStore blobStore = blobStore(name);
@@ -186,20 +287,15 @@ public class BlobStoreManagerImpl
     blobStore.stop();
     blobStore.remove();
     untrack(name);
-    store.delete(blobStore.getBlobStoreConfiguration());
-
+    if (!EventHelper.isReplicating()) {
+      store.delete(blobStore.getBlobStoreConfiguration());
+    }
     eventManager.post(new BlobStoreDeletedEvent(blobStore));
   }
 
   @Override
   public boolean exists(final String name) {
     return stores.keySet().stream().anyMatch(key -> key.equalsIgnoreCase(name));
-  }
-
-  private BlobStore newBlobStore(final BlobStoreConfiguration blobStoreConfiguration) throws Exception {
-    BlobStore blobStore = blobstorePrototypes.get(blobStoreConfiguration.getType()).get();
-    blobStore.init(blobStoreConfiguration);
-    return blobStore;
   }
 
   @VisibleForTesting
@@ -209,7 +305,8 @@ public class BlobStoreManagerImpl
     return blobStore;
   }
 
-  private void track(final String name, final BlobStore blobStore) {
+  @VisibleForTesting
+  void track(final String name, final BlobStore blobStore) {
     log.debug("Tracking: {}", name);
     stores.put(name, blobStore);
   }
@@ -221,53 +318,55 @@ public class BlobStoreManagerImpl
 
   @Subscribe
   public void on(final BlobStoreConfigurationCreatedEvent event) {
-    handleRemoteOnly(event, evt -> {
-      // only create if not tracked
-      String name = evt.getName();
-      if (!stores.containsKey(name)) {
-        store.list().stream()
-            .filter(c -> c.getName().equals(name))
-            .findFirst()
-            .ifPresent(c -> {
-              try {
-                BlobStore blobStore = newBlobStore(c);
-                track(name, blobStore);
-                blobStore.start();
-              }
-              catch (Exception e) {
-                log.warn("create blob store from remote event failed: {}", name, e);
-              }
-            });
-      }
-    });
+    handleReplication(event, e -> create(e.getConfiguration()));
   }
 
   @Subscribe
   public void on(final BlobStoreConfigurationDeletedEvent event) {
-    handleRemoteOnly(event, evt -> {
-      try {
-        // only delete if tracked
-        String name = evt.getName();
-        if (stores.containsKey(name)) {
-          BlobStore blobStore = blobStore(name);
-          blobStore.stop();
-          blobStore.remove();
-          untrack(name);
-        }
-      }
-      catch (Exception e) {
-        log.warn("delete blob store from remote event failed: {}", evt.getName(), e);
-      }
-    });
+    handleReplication(event, e -> forceDelete(e.getName()));
   }
 
-  private void handleRemoteOnly(final BlobStoreConfigurationEvent event,
-                                final Consumer<BlobStoreConfigurationEvent> consumer)
+  @Subscribe
+  public void on(final BlobStoreConfigurationUpdatedEvent event) {
+    handleReplication(event, e -> update(e.getConfiguration()));
+  }
+
+  private void handleReplication(final BlobStoreConfigurationEvent event,
+                                 final EventConsumer<BlobStoreConfigurationEvent> consumer)
   {
-    log.trace("handling: {}", event);
-    // skip local events
     if (!event.isLocal()) {
-      consumer.accept(event);
+      try {
+        consumer.accept(event);
+      }
+      catch (Exception e) {
+        log.error("Failed to replicate: {}", event, e);
+      }
     }
+  }
+
+  @Override
+  public long blobStoreUsageCount(final String blobStoreName) {
+    long count = 0;
+    for (BlobStore otherBlobStore : stores.values()) {
+      BlobStoreConfiguration otherBlobStoreConfig = otherBlobStore.getBlobStoreConfiguration();
+      BlobStoreDescriptor otherBlobStoreDescriptor = blobStoreDescriptors.get(otherBlobStoreConfig.getType());
+      if (otherBlobStoreDescriptor.configHasDependencyOn(otherBlobStoreConfig, blobStoreName)) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  @Override
+  public boolean isPromotable(final String blobStoreName) {
+    BlobStore blobStore = get(blobStoreName);
+    return blobStore != null && blobStore.isGroupable() && blobStore.isWritable() &&
+        !store.findParent(blobStore.getBlobStoreConfiguration().getName()).isPresent();
+  }
+
+  @Override
+  public Optional<String> getParent(final String blobStoreName) {
+    BlobStore blobStore = get(blobStoreName);
+    return blobStore == null ? empty() : store.findParent(blobStoreName).map(BlobStoreConfiguration::getName);
   }
 }

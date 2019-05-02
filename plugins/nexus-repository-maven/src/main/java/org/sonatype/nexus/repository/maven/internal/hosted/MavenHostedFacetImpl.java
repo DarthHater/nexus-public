@@ -17,7 +17,9 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
@@ -116,10 +118,16 @@ public class MavenHostedFacetImpl
   }
 
   @Override
-  public void deleteMetadata(final String groupId, final String artifactId, final String baseVersion) {
+  public void deleteMetadata(final List<String[]> gavs) {
+    log.debug("Deleting Maven2 metadata for {} GAVs for repository={}", gavs.size(), getRepository().getName());
+    metadataRebuilder.deleteMetadata(getRepository(), gavs);
+  }
+
+  @Override
+  public Set<String> deleteMetadata(final String groupId, final String artifactId, final String baseVersion) {
     log.debug("Deleting Maven2 hosted repository metadata: repository={}, g={}, a={}, bV={}", getRepository().getName(),
         groupId, artifactId, baseVersion);
-    metadataRebuilder.deleteAndRebuild(getRepository(), groupId, artifactId, baseVersion);
+    return metadataRebuilder.deleteAndRebuild(getRepository(), groupId, artifactId, baseVersion);
   }
 
   @TransactionalStoreBlob

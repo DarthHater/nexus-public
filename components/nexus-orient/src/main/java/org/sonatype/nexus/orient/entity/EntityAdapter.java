@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.lang.reflect.ParameterizedType;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Set;
 
 import javax.annotation.Nullable;
@@ -36,10 +38,12 @@ import org.sonatype.nexus.orient.RecordIdObfuscator;
 import org.sonatype.nexus.orient.internal.PbeCompression;
 
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableList;
 import com.google.common.reflect.TypeToken;
 import com.orientechnologies.orient.core.db.ODatabase;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.db.record.OTrackedList;
 import com.orientechnologies.orient.core.db.record.OTrackedMap;
 import com.orientechnologies.orient.core.db.record.OTrackedSet;
@@ -59,6 +63,8 @@ import static com.google.common.collect.Streams.stream;
 import static java.util.Collections.singletonMap;
 import static java.util.stream.Collectors.toSet;
 import static org.sonatype.nexus.common.entity.EntityHelper.id;
+import static org.sonatype.nexus.orient.entity.ConflictState.DENY;
+import static org.sonatype.nexus.orient.entity.ConflictState.IGNORE;
 
 /**
  * Support for entity-adapter implementations.
@@ -83,6 +89,10 @@ public abstract class EntityAdapter<T extends Entity>
   private RecordIdObfuscator recordIdObfuscator;
 
   private EntityHook entityHook;
+
+  private ConflictHook conflictHook;
+
+  private List<? extends DeconflictStep<T>> deconflictSteps = ImmutableList.of();
 
   private String dbName;
 
@@ -115,6 +125,16 @@ public abstract class EntityAdapter<T extends Entity>
   @Inject
   public void enableEntityHook(final EntityHook entityHook) {
     this.entityHook = checkNotNull(entityHook);
+  }
+
+  @Inject
+  public void enableConflictHook(final ConflictHook conflictHook) {
+    this.conflictHook = checkNotNull(conflictHook);
+  }
+
+  @Inject
+  public void setDeconflictSteps(final List<? extends DeconflictStep<T>> deconflictSteps) {
+    this.deconflictSteps = checkNotNull(deconflictSteps);
   }
 
   /**
@@ -169,6 +189,13 @@ public abstract class EntityAdapter<T extends Entity>
 
     if (sendEvents() && entityHook != null) {
       entityHook.enableEvents(this);
+    }
+
+    if (resolveConflicts() && conflictHook != null) {
+      conflictHook.enableConflictResolution(this);
+      if (!conflictHook.equals(db.getConflictStrategy())) {
+        db.setConflictStrategy(conflictHook);
+      }
     }
   }
 
@@ -247,7 +274,8 @@ public abstract class EntityAdapter<T extends Entity>
   /**
    * Read entity from document.
    */
-  public T readEntity(final ODocument document) {
+  public T readEntity(final OIdentifiable identifiable) {
+    ODocument document = identifiable.getRecord(); // no-op if it's already a document
     checkNotNull(document);
 
     T entity = newEntity();
@@ -384,6 +412,7 @@ public abstract class EntityAdapter<T extends Entity>
 
   /**
    * Makes the given (tracked) entity attributes detachable by using a lazy copy technique.
+   * Detaching only occurs outside of transactions, see {@link #allowDetach()} for details.
    *
    * Without this the tracked Orient collections will attempt to call back into the current
    * transaction when their content is changed, which can lead to exceptions if there is no
@@ -407,9 +436,11 @@ public abstract class EntityAdapter<T extends Entity>
 
   /**
    * Lazily detaches the value; tracked collections are detached as their content is touched.
+   *
+   * @since 3.11
    */
   @SuppressWarnings({ "unchecked", "rawtypes" })
-  private <V> V detach(final V value) {
+  protected <V> V detach(final V value) {
     Object untracked = value;
     if (value instanceof OTrackedMap) {
       untracked = new DetachingMap((Map) value, this::allowDetach, this::detach);
@@ -451,5 +482,58 @@ public abstract class EntityAdapter<T extends Entity>
       default:
         return null;
     }
+  }
+
+  /**
+   * Override this method to declare a custom affinity for {@link EntityEvent}s.
+   *
+   * @since 3.11
+   */
+  public String eventAffinity(final ODocument document) {
+    return document.getIdentity().toString();
+  }
+
+  //
+  // Conflict resolution
+  //
+
+  /**
+   * Override this method to enable conflict resolution for entities managed by this adapter.
+   *
+   * @since 3.14
+   */
+  public boolean resolveConflicts() {
+    return false;
+  }
+
+  /**
+   * Attempts to resolve conflicts between the stored and incoming records by deconfliction.
+   *
+   * @return {@link ConflictState#MERGE} if this results in further changes to {@code changeRecord}
+   *
+   * @since 3.14
+   */
+  public ConflictState resolve(final ODocument storedRecord, final ODocument changeRecord) {
+    return deconflictSteps.stream()
+        .reduce(IGNORE, (decision, step) -> decision.andThen(
+            () -> step.deconflict(storedRecord, changeRecord)),
+            ConflictState::max)
+        .andThen(() -> compare(storedRecord, changeRecord));
+  }
+
+  /**
+   * Does one last round of comparison between the (hopefully) deconflicted records.
+   *
+   * @since 3.14
+   */
+  protected ConflictState compare(final ODocument storedRecord, final ODocument changeRecord) {
+    for (Entry<String, Object> property : storedRecord) {
+      Object changeValue = changeRecord.rawField(property.getKey());
+      if (!Objects.equals(property.getValue(), changeValue)) {
+        log.trace("Conflict detected in {}: {} vs {}", property.getKey(), property.getValue(), changeValue);
+        return DENY;
+      }
+    }
+    return IGNORE; // identical content, update can be ignored or allowed
   }
 }

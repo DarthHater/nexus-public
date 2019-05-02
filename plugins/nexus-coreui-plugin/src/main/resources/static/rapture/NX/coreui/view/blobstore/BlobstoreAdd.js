@@ -66,6 +66,7 @@ Ext.define('NX.coreui.view.blobstore.BlobstoreAdd', {
       beforerender: function() {
         var me = this;
         me.setValue(me.getStore('BlobstoreType').first().data.id);
+        typeCombo.resetOriginalValue();
       }
     });
 
@@ -82,5 +83,8 @@ Ext.define('NX.coreui.view.blobstore.BlobstoreAdd', {
         }
       }
     });
+
+    // Enable quota fields
+    Ext.Array.forEach(['#isQuotaEnabled', '#quotaType', '#quotaLimit'], function(f) { me.down(f).setReadOnly(false); });
   }
 });

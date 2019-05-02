@@ -31,11 +31,13 @@ Ext.define('NX.coreui.store.BlobstoreType', {
 
     reader: {
       type: 'json',
-      root: 'data',
-      idProperty: 'id',
+      rootProperty: 'data',
       successProperty: 'success'
     }
   },
 
-  sorters: { property: 'name', direction: 'ASC' }
+  sorters: { property: 'name', direction: 'ASC' },
+  filters: [
+    { property: 'isEnabled', value: true }
+  ]
 });

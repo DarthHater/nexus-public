@@ -12,13 +12,27 @@
  */
 package org.sonatype.nexus.repository.npm.internal;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.BiFunction;
+
+import javax.annotation.Nullable;
 
 import org.sonatype.nexus.common.collect.NestedAttributesMap;
+import org.sonatype.nexus.repository.Repository;
+import org.sonatype.nexus.repository.storage.Asset;
+import org.sonatype.nexus.repository.storage.Bucket;
+import org.sonatype.nexus.repository.storage.StorageTx;
+import org.sonatype.nexus.transaction.UnitOfWork;
 
 import org.joda.time.DateTime;
 
+import static java.util.Objects.isNull;
+import static java.util.Objects.nonNull;
+import static org.sonatype.nexus.repository.npm.internal.NpmAttributes.P_NAME;
+import static org.sonatype.nexus.repository.npm.internal.NpmFacetUtils.findPackageRootAsset;
+import static org.sonatype.nexus.repository.npm.internal.NpmFacetUtils.loadPackageRoot;
 import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.DIST;
 import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.DIST_TAGS;
 import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.META_ID;
@@ -26,6 +40,7 @@ import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.NPM_TI
 import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.TARBALL;
 import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.TIME;
 import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.VERSIONS;
+import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.getLatestVersionFromPackageRoot;
 import static org.sonatype.nexus.repository.npm.internal.NpmMetadataUtils.rewriteTarballUrl;
 
 /**
@@ -79,7 +94,9 @@ public class NpmPackageRootMetadataUtils
    */
   public static NestedAttributesMap createFullPackageMetadata(final NestedAttributesMap packageJson,
                                                               final String repositoryName,
-                                                              final String sha1sum)
+                                                              final String sha1sum,
+                                                              @Nullable final Repository repository,
+                                                              final BiFunction<String, String, String> function)
   {
     String name = packageJson.get(NpmAttributes.P_NAME, String.class);
     String version = packageJson.get(NpmAttributes.P_VERSION, String.class);
@@ -89,7 +106,10 @@ public class NpmPackageRootMetadataUtils
 
     packageRoot.set(META_ID, name);
 
-    packageRoot.child(DIST_TAGS).set(LATEST, version);
+    String packageRootLatestVersion = isNull(repository) ? "" : getPackageRootLatestVersion(packageJson, repository);
+
+    packageRoot.child(DIST_TAGS).set(LATEST, function.apply(packageRootLatestVersion, version));
+
     packageRoot.child(NpmAttributes.P_USERS);
 
     NestedAttributesMap time = packageRoot.child(TIME);
@@ -98,12 +118,7 @@ public class NpmPackageRootMetadataUtils
     time.set(CREATED, now);
 
     // Hoisting fields from version metadata
-    String bugsUrl = packageJson.child(NpmAttributes.P_BUGS).get(NpmAttributes.P_URL, String.class);
-    if (bugsUrl != null) {
-      packageRoot.set(NpmAttributes.P_BUGS, bugsUrl);
-    }
-
-
+    setBugsUrl(packageJson, packageRoot);
 
     for (String field : FULL_HOISTED_FIELDS) {
       copy(packageRoot, packageJson, field);
@@ -129,6 +144,49 @@ public class NpmPackageRootMetadataUtils
     return packageRoot;
   }
 
+  private static String getPackageRootLatestVersion(final NestedAttributesMap packageJson,
+                                                    final Repository repository)
+  {
+    StorageTx tx = UnitOfWork.currentTx();
+    NpmPackageId packageId = NpmPackageId.parse((String) packageJson.get(P_NAME));
+
+    try {
+      NestedAttributesMap packageRoot = getPackageRoot(tx, repository, packageId);
+      if(nonNull(packageRoot)) {
+
+        String latestVersion = getLatestVersionFromPackageRoot(packageRoot);
+        if (nonNull(latestVersion)) {
+          return latestVersion;
+        }
+      }
+    }
+    catch (IOException ignored) { // NOSONAR
+    }
+    return "";
+  }
+
+  /**
+   * Fetches the package root as {@link NestedAttributesMap}
+   * @param tx
+   * @param repository
+   * @param packageId
+   * @return package root if found otherwise null
+   * @throws IOException
+   */
+  @Nullable
+  public static NestedAttributesMap getPackageRoot(final StorageTx tx,
+                                                   final Repository repository,
+                                                   final NpmPackageId packageId) throws IOException
+  {
+    Bucket bucket = tx.findBucket(repository);
+
+    Asset packageRootAsset = findPackageRootAsset(tx, bucket, packageId);
+    if (packageRootAsset != null) {
+      return loadPackageRoot(tx, packageRootAsset);
+    }
+    return null;
+  }
+
   private static void copy(final NestedAttributesMap map, final NestedAttributesMap src, final String field) {
     Object object = src.get(field);
     if (object instanceof Map) {
@@ -145,6 +203,21 @@ public class NpmPackageRootMetadataUtils
     }
     else if (object != null) {
       map.set(field, object);
+    }
+  }
+
+  private static void setBugsUrl(NestedAttributesMap packageJson, NestedAttributesMap packageRoot) {
+    Object bugs = packageJson.get(NpmAttributes.P_BUGS);
+    String bugsUrl = null;
+
+    if (bugs instanceof String) {
+      bugsUrl = (String) bugs;
+    } else if (bugs != null) {
+      bugsUrl = packageJson.child(NpmAttributes.P_BUGS).get(NpmAttributes.P_URL, String.class);
+    }
+
+    if (bugsUrl != null) {
+      packageRoot.set(NpmAttributes.P_BUGS, bugsUrl);
     }
   }
 }

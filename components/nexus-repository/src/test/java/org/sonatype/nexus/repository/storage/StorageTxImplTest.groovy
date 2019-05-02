@@ -23,6 +23,7 @@ import org.sonatype.nexus.common.entity.EntityMetadata
 import org.sonatype.nexus.common.hash.HashAlgorithm
 import org.sonatype.nexus.mime.MimeRulesSource
 import org.sonatype.nexus.repository.IllegalOperationException
+import org.sonatype.nexus.repository.Repository
 import org.sonatype.nexus.repository.view.ContentTypes
 
 import com.google.common.base.Supplier
@@ -34,12 +35,14 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.Mock
 
+import static java.util.Collections.singletonList
 import static org.hamcrest.MatcherAssert.assertThat
 import static org.hamcrest.Matchers.is
 import static org.mockito.Matchers.any
 import static org.mockito.Matchers.anyBoolean
 import static org.mockito.Matchers.anyString
 import static org.mockito.Matchers.eq
+import static org.mockito.Mockito.doReturn
 import static org.mockito.Mockito.mock
 import static org.mockito.Mockito.never
 import static org.mockito.Mockito.times
@@ -73,9 +76,11 @@ extends TestSupport
   @Mock
   private Asset asset
   @Mock
-  private EntityMetadata entityMetadata;
+  private EntityMetadata entityMetadata
   @Mock
-  private EntityId entityId;
+  private AssetManager assetManager
+  @Mock
+  private EntityId entityId
 
   private Supplier<InputStream> supplier = new Supplier<InputStream>(){
     @Override
@@ -83,7 +88,6 @@ extends TestSupport
       return new ByteArrayInputStream('testContent'.bytes)
     }
   }
-
   private DefaultContentValidator defaultContentValidator = mock(DefaultContentValidator)
   private Map<String, String> headers = [:]
   private Map<String, String> expectedHeaders = [(Bucket.REPO_NAME_HEADER) : 'testRepo', (BlobStore.BLOB_NAME_HEADER) : 'testBlob.txt', (BlobStore.CREATED_BY_HEADER) : 'test',  (BlobStore.CREATED_BY_IP_HEADER) : '127.0.0.1', (BlobStore.CONTENT_TYPE_HEADER) : 'text/plain']
@@ -91,9 +95,9 @@ extends TestSupport
 
   @Before
   void prepare() {
-    when(asset.getEntityMetadata()).thenReturn(entityMetadata);
-    when(entityMetadata.getId()).thenReturn(entityId);
-    
+    when(asset.getEntityMetadata()).thenReturn(entityMetadata)
+    when(entityMetadata.getId()).thenReturn(entityId)
+
     when(defaultContentValidator.determineContentType(anyBoolean(), any(Supplier), eq(MimeRulesSource.NOOP), anyString(), anyString())).thenReturn("text/plain")
     when(db.getTransaction()).thenReturn(tx)
   }
@@ -319,7 +323,7 @@ extends TestSupport
     def headerMap = [(BlobStore.CREATED_BY_IP_HEADER) : '127.0.0.1', (BlobStore.CREATED_BY_HEADER) : 'anonymous']
     when(blob.getHeaders()).thenReturn(headerMap)
     when(assetBlob.getBlob()).thenReturn(blob)
-    when(assetBlob.getBlobRef()).thenReturn(blobRef);
+    when(assetBlob.getBlobRef()).thenReturn(blobRef)
     when(asset.blobRef()).thenReturn(blobRef)
     def newBlobRef = mock(BlobRef)
     def newAssetBlob = mock(AssetBlob)
@@ -641,7 +645,7 @@ extends TestSupport
   void 'verifying asset lookup by id'() {
     def assetId = mock(EntityId)
     def asset = mock(Asset)
-    when(assetEntityAdapter.read(db, assetId)).thenReturn(asset);
+    when(assetEntityAdapter.read(db, assetId)).thenReturn(asset)
     def underTest = new StorageTxImpl(
         'test',
         '127.0.0.1',
@@ -658,5 +662,84 @@ extends TestSupport
         MimeRulesSource.NOOP, componentFactory)
 
     assertThat underTest.findAsset(assetId), is(asset)
+  }
+
+  @Test
+  void 'test asset exists'() {
+    def repositoryName = 'testRepo'
+    def repository = mock(Repository.class)
+
+    def underTest = new StorageTxImpl(
+        'test',
+        '127.0.0.1',
+        blobTx,
+        db,
+        repositoryName,
+        WritePolicy.ALLOW,
+        WritePolicySelector.DEFAULT,
+        bucketEntityAdapter,
+        componentEntityAdapter,
+        assetEntityAdapter,
+        false,
+        defaultContentValidator,
+        MimeRulesSource.NOOP, componentFactory)
+
+    underTest.assetExists(repositoryName, repository)
+    verify(assetEntityAdapter).exists(eq(db), eq(repositoryName), any(Bucket.class))
+
+    doReturn(true).when(assetEntityAdapter).exists(eq(db), eq(repositoryName), any(Bucket.class))
+    assertThat underTest.assetExists(repositoryName, repository), is(true)
+
+    doReturn(false).when(assetEntityAdapter).exists(eq(db), eq(repositoryName), any(Bucket.class))
+    assertThat underTest.assetExists(repositoryName, repository), is(false)
+  }
+
+  @Test
+  void 'browse assets with query'() {
+    def asset = mock(Asset)
+
+    when(assetEntityAdapter.browseByQueryAsync(any(), any(), any(), any(), any())).thenReturn(singletonList(asset))
+
+    def underTest = new StorageTxImpl(
+        'test',
+        '127.0.0.1',
+        blobTx,
+        db,
+        'testRepo',
+        WritePolicy.ALLOW,
+        WritePolicySelector.DEFAULT,
+        bucketEntityAdapter,
+        componentEntityAdapter,
+        assetEntityAdapter,
+        false,
+        defaultContentValidator,
+        MimeRulesSource.NOOP, componentFactory)
+
+    assertThat underTest.browseAssets(mock(Query), mock(Bucket)), is(singletonList(asset))
+  }
+
+  @Test
+  void 'browse components with query'() {
+    def component = mock(Component)
+
+    when(componentEntityAdapter.browseByQueryAsync(any(), any(), any(), any(), any())).
+        thenReturn(singletonList(component))
+
+    def underTest = new StorageTxImpl(
+        'test',
+        '127.0.0.1',
+        blobTx,
+        db,
+        'testRepo',
+        WritePolicy.ALLOW,
+        WritePolicySelector.DEFAULT,
+        bucketEntityAdapter,
+        componentEntityAdapter,
+        assetEntityAdapter,
+        false,
+        defaultContentValidator,
+        MimeRulesSource.NOOP, componentFactory)
+
+    assertThat underTest.browseComponents(mock(Query), mock(Bucket)), is(singletonList(component))
   }
 }

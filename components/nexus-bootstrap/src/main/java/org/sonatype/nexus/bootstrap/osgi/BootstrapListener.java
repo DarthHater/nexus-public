@@ -13,15 +13,15 @@
 package org.sonatype.nexus.bootstrap.osgi;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.EnumSet;
-import java.util.Map;
+import java.util.Properties;
 
-import javax.annotation.Nullable;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletContextEvent;
 import javax.servlet.ServletContextListener;
 
-import org.sonatype.nexus.bootstrap.ConfigurationHolder;
 import org.sonatype.nexus.bootstrap.internal.DirectoryHelper;
 
 import org.apache.karaf.features.Feature;
@@ -49,7 +49,21 @@ public class BootstrapListener
 
   private static final String NEXUS_LOAD_AS_OSS_PROP_NAME = "nexus.loadAsOSS";
 
+  private static final String EDITION_PRO = "edition_pro";
+
   private static final Logger log = LoggerFactory.getLogger(BootstrapListener.class);
+
+  private static final String NEXUS_EDITION = "nexus-edition";
+
+  private static final String NEXUS_FULL_EDITION = "nexus-full-edition";
+
+  private static final String NEXUS_FEATURES = "nexus-features";
+
+  private static final String NEXUS_PRO_FEATURE = "nexus-pro-feature";
+
+  private static final String NEXUS_OSS_EDITION = "nexus-oss-edition";
+
+  private static final String NEXUS_OSS_FEATURE = "nexus-oss-feature";
 
   private ListenerTracker listenerTracker;
 
@@ -62,7 +76,7 @@ public class BootstrapListener
     ServletContext servletContext = event.getServletContext();
     
     try {
-      Map<String, String> properties = ConfigurationHolder.get();
+      Properties properties = System.getProperties();
       if (properties == null) {
         throw new IllegalStateException("Missing bootstrap configuration properties");
       }
@@ -71,15 +85,21 @@ public class BootstrapListener
       requireProperty(properties, "karaf.base");
       requireProperty(properties, "karaf.data");
 
-      if (shouldSwitchToOss()) {
-        adjustEditionProperties(properties);  
+      File workDir = new File(properties.getProperty("karaf.data")).getCanonicalFile();
+      Path workDirPath = workDir.toPath();
+      DirectoryHelper.mkdir(workDirPath);
+
+      if (hasProFeature(properties)) {
+        if (shouldSwitchToOss(workDirPath)) {
+          adjustEditionProperties(properties);
+        }
+        else {
+          createProEditionMarker(workDirPath);
+        }
       }
 
       // pass bootstrap properties to embedded servlet listener
       servletContext.setAttribute("nexus.properties", properties);
-
-      File workDir = new File(properties.get("karaf.data")).getCanonicalFile();
-      DirectoryHelper.mkdir(workDir.toPath());
 
       // are we already running in OSGi or should we embed OSGi?
       Bundle containingBundle = FrameworkUtil.getBundle(getClass());
@@ -93,8 +113,8 @@ public class BootstrapListener
       }
 
       // bootstrap our chosen Nexus edition
-      requireProperty(properties, "nexus-edition");
-      installNexusEdition(bundleContext, properties.get("nexus-edition"));
+      requireProperty(properties, NEXUS_EDITION);
+      installNexusEdition(bundleContext, properties);
 
       // watch out for the real Nexus listener
       listenerTracker = new ListenerTracker(bundleContext, "nexus", servletContext);
@@ -115,42 +135,104 @@ public class BootstrapListener
     log.info("Initialized");
   }
 
+  private boolean hasProFeature(final Properties properties) {
+    return properties.getProperty(NEXUS_FEATURES, "").contains(NEXUS_PRO_FEATURE);
+  }
+
   /**
    * Ensure that the oss edition is loaded, regardless of what the configuration specifies.
    * @param properties
    */
-  private void adjustEditionProperties(final Map<String, String> properties) {
+  private void adjustEditionProperties(final Properties properties) {
     log.info("Loading OSS Edition");
     //override to load nexus-oss-edition
-    properties.put("nexus-edition", "nexus-oss-edition");
+    properties.put(NEXUS_EDITION, NEXUS_OSS_EDITION);
     properties
-        .put("nexus-features", properties.get("nexus-features").replace("nexus-pro-feature", "nexus-oss-feature"));
+        .put(NEXUS_FEATURES, properties.getProperty(NEXUS_FEATURES).replace(NEXUS_PRO_FEATURE, NEXUS_OSS_FEATURE));
   }
 
   /**
-   * Determine whether or not we should be booting the OSS edition or not, based on the presence of a license or
-   * a System property that can be used to override the behaviour.
+   * Determine whether or not we should be booting the OSS edition or not, based on the presence of a pro edition marker
+   * file, license, or a System property that can be used to override the behaviour.
    */
-  private static boolean shouldSwitchToOss() {
-    if (null != System.getProperty(NEXUS_LOAD_AS_OSS_PROP_NAME)) {
-      return Boolean.valueOf(System.getProperty(NEXUS_LOAD_AS_OSS_PROP_NAME));
+  boolean shouldSwitchToOss(final Path workDirPath) {
+    File proEditionMarker = getProEditionMarker(workDirPath);
+    boolean switchToOss;
+
+    if (hasNexusLoadAsOSS()) {
+      switchToOss = isNexusLoadAsOSS();
     }
-    if (Boolean.getBoolean("nexus.clustered")) {
-      return false; // avoid switching the edition when clustered
+    else if (proEditionMarker.exists()) {
+      switchToOss = false;
     }
-    return System.getProperty("nexus.licenseFile") == null
-        && userRoot().node("/com/sonatype/nexus/professional").get("license", null) == null;
+    else if (isNexusClustered()) {
+      switchToOss = false; // avoid switching the edition when clustered
+    }
+    else {
+      switchToOss = isNullNexusLicenseFile() && isNullJavaPrefLicense();
+    }
+
+    return switchToOss;
   }
 
-  private static void installNexusEdition(final BundleContext ctx, @Nullable final String editionName)
+  boolean hasNexusLoadAsOSS() {
+    return null != System.getProperty(NEXUS_LOAD_AS_OSS_PROP_NAME);
+  }
+
+  boolean isNexusLoadAsOSS() {
+    return Boolean.getBoolean(NEXUS_LOAD_AS_OSS_PROP_NAME);
+  }
+
+  File getProEditionMarker(final Path workDirPath) {
+    return workDirPath.resolve(EDITION_PRO).toFile();
+  }
+
+  private void createProEditionMarker(final Path workDirPath) {
+    File proEditionMarker = getProEditionMarker(workDirPath);
+    try {
+      if (proEditionMarker.createNewFile()) {
+        log.debug("Created pro edition marker file: {}", proEditionMarker);
+      }
+    }
+    catch (IOException e) {
+      log.error("Failed to create pro edition marker file: {}", proEditionMarker, e);
+    }
+  }
+
+  boolean isNexusClustered() {
+    return Boolean.getBoolean("nexus.clustered");
+  }
+
+  boolean isNullNexusLicenseFile() {
+    return System.getProperty("nexus.licenseFile") == null;
+  }
+
+  boolean isNullJavaPrefLicense() {
+    Thread currentThread = Thread.currentThread();
+    ClassLoader tccl = currentThread.getContextClassLoader();
+    // Java prefs spawns a Timer-Task that inherits the current TCCL;
+    // temporarily clear it so we can be GC'd if we bounce the KERNEL
+    currentThread.setContextClassLoader(null);
+    try {
+      return userRoot().node("/com/sonatype/nexus/professional").get("license", null) == null;
+    }
+    finally {
+      currentThread.setContextClassLoader(tccl);
+    }
+  }
+
+  private static void installNexusEdition(final BundleContext ctx, final Properties properties)
       throws Exception
   {
+    String editionName = properties.getProperty(NEXUS_EDITION);
     if (editionName != null && editionName.length() > 0) {
       final ServiceTracker<?, FeaturesService> tracker = new ServiceTracker<>(ctx, FeaturesService.class, null);
       tracker.open();
       try {
         FeaturesService featuresService = tracker.waitForService(1000);
         Feature editionFeature = featuresService.getFeature(editionName);
+
+        properties.put(NEXUS_FULL_EDITION, editionFeature.toString());
 
         log.info("Installing: {}", editionFeature);
 
@@ -169,7 +251,7 @@ public class BootstrapListener
     }
   }
 
-  private static void requireProperty(final Map<String, String> properties, final String name) {
+  private static void requireProperty(final Properties properties, final String name) {
     if (!properties.containsKey(name)) {
       throw new IllegalStateException("Missing required property: " + name);
     }

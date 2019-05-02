@@ -18,7 +18,7 @@
  * @since 3.0
  */
 Ext.define('NX.ext.SearchBox', {
-  extend: 'Ext.form.field.Trigger',
+  extend: 'Ext.form.field.Text',
   alias: 'widget.nx-searchbox',
   requires: [
     'Ext.util.KeyNav'
@@ -34,8 +34,21 @@ Ext.define('NX.ext.SearchBox', {
    */
   searchDelay: 1000,
 
-  // TODO: Only show clear trigger if we have text
-  trigger1Cls: 'nx-form-fa-times-circle-trigger',
+  triggers: {
+    clear: {
+      cls: 'nx-form-fa-times-circle-trigger',
+      handler: function() {
+        this.clearSearch();
+      }
+    }
+  },
+
+  listeners: {
+    change: 'onValueChange',
+    keypress: 'updateTriggerVisibility'
+  },
+
+  maskOnDisable: false,
 
   /**
    * @override
@@ -44,38 +57,11 @@ Ext.define('NX.ext.SearchBox', {
     var me = this;
 
     Ext.apply(me, {
-      checkChangeBuffer: me.searchDelay
+      checkChangeBuffer: me.searchDelay,
+      ariaLabel: me.emptyText
     });
 
     me.callParent(arguments);
-
-    me.on('change', me.onValueChange, me);
-
-    me.addEvents(
-        /**
-         * Fires before a search is performed.
-         *
-         * @event beforesearch
-         */
-        'beforesearch',
-
-        /**
-         * Fires when a search values was typed. Fires with a delay of **{@link #searchDelay}**.
-         *
-         * @event search
-         * @param {NX.ext.SearchBox} this search box
-         * @param {String} search value
-         */
-        'search',
-
-        /**
-         * Fires when a search value had been cleared.
-         *
-         * @event searchcleared
-         * @param {NX.ext.SearchBox} this search box
-         */
-        'searchcleared'
-    );
   },
 
   /**
@@ -86,7 +72,8 @@ Ext.define('NX.ext.SearchBox', {
 
     me.callParent();
 
-    me.keyNav = new Ext.util.KeyNav(me.inputEl, {
+    me.keyNav = new Ext.util.KeyNav({
+      target: me.inputEl,
       esc: {
         handler: me.clearSearch,
         scope: me,
@@ -103,15 +90,6 @@ Ext.define('NX.ext.SearchBox', {
   },
 
   /**
-   * Clear search.
-   *
-   * @private
-   */
-  onTrigger1Click: function () {
-    this.clearSearch();
-  },
-
-  /**
    * Search on ENTER.
    *
    * @private
@@ -119,7 +97,12 @@ Ext.define('NX.ext.SearchBox', {
   onEnter: function () {
     var me = this;
 
-    me.search(me.getValue());
+    //me.lastValue is used to check for changes in the delayed checkchanges task, so we fake it out here
+    //otherwise, the onValueChange will get triggered regardless when timeout occurs
+    //(causing undesired page transition if page is changed prior to this delayed check)
+    me.lastValue = me.getValue();
+    me.search(me.lastValue);
+    me.resetOriginalValue();
   },
 
   /**

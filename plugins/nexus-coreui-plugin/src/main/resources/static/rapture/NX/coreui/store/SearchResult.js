@@ -30,8 +30,9 @@ Ext.define('NX.coreui.store.SearchResult', {
 
     reader: {
       type: 'json',
-      root: 'data',
-      successProperty: 'success'
+      rootProperty: 'data',
+      successProperty: 'success',
+      keepRawData: true
     }
   },
 
@@ -39,8 +40,5 @@ Ext.define('NX.coreui.store.SearchResult', {
   pageSize: 300,
 
   remoteFilter: true,
-  remoteSort: true,
-
-  sorters: { property: 'name', direction: 'ASC' }
-
+  remoteSort: true
 });

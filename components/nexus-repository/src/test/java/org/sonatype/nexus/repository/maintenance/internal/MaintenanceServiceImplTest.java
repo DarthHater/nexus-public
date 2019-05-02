@@ -12,6 +12,8 @@
  */
 package org.sonatype.nexus.repository.maintenance.internal;
 
+import java.util.Collections;
+
 import org.sonatype.goodies.testsupport.TestSupport;
 import org.sonatype.nexus.common.entity.EntityId;
 import org.sonatype.nexus.common.entity.EntityMetadata;
@@ -20,6 +22,7 @@ import org.sonatype.nexus.repository.IllegalOperationException;
 import org.sonatype.nexus.repository.MissingFacetException;
 import org.sonatype.nexus.repository.Repository;
 import org.sonatype.nexus.repository.security.ContentPermissionChecker;
+import org.sonatype.nexus.repository.security.RepositoryPermissionChecker;
 import org.sonatype.nexus.repository.security.VariableResolverAdapter;
 import org.sonatype.nexus.repository.security.VariableResolverAdapterManager;
 import org.sonatype.nexus.repository.storage.Asset;
@@ -28,16 +31,24 @@ import org.sonatype.nexus.repository.storage.ComponentMaintenance;
 import org.sonatype.nexus.repository.storage.StorageFacet;
 import org.sonatype.nexus.repository.storage.StorageTx;
 import org.sonatype.nexus.security.BreadActions;
+import org.sonatype.nexus.security.subject.FakeAlmightySubject;
 import org.sonatype.nexus.selector.VariableSource;
 
 import com.google.common.base.Supplier;
 import org.apache.shiro.authz.AuthorizationException;
+import org.apache.shiro.util.ThreadContext;
+import org.joda.time.DateTime;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
 
 import static java.util.Collections.singletonList;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -95,11 +106,18 @@ public class MaintenanceServiceImplTest
   @Mock
   StorageTx storageTx;
 
+  @Mock
+  DeleteFolderService deleteFolderService;
+
+  @Mock
+  RepositoryPermissionChecker repositoryPermissionChecker;
+
   MaintenanceServiceImpl underTest;
 
   @Before
   public void setUp() throws Exception {
     when(format.toString()).thenReturn("maven2");
+    when(format.getValue()).thenReturn("maven2");
 
     setupRepository();
     setupStorage();
@@ -107,8 +125,8 @@ public class MaintenanceServiceImplTest
     setupVariableResolvers();
     setupAssetComponents();
 
-    underTest = new MaintenanceServiceImpl(contentPermissionChecker,
-        variableResolverAdapterManager);
+    underTest = new MaintenanceServiceImpl(contentPermissionChecker, variableResolverAdapterManager,
+        deleteFolderService, repositoryPermissionChecker);
   }
 
   private void setupAssetComponents() {
@@ -148,10 +166,9 @@ public class MaintenanceServiceImplTest
   public void testDeleteAsset() {
     when(contentPermissionChecker.isPermitted("maven-releases", "maven2", BreadActions.DELETE, variableSource))
         .thenReturn(true);
+    when(componentMaintenance.deleteAsset(assetEntityId)).thenReturn(Collections.singleton("assetname"));
 
-    underTest.deleteAsset(mavenReleases, assetOne);
-
-    verify(componentMaintenance).deleteAsset(assetEntityId);
+    assertThat(underTest.deleteAsset(mavenReleases, assetOne), contains("assetname"));
   }
 
   @Test(expected = IllegalOperationException.class)
@@ -190,5 +207,22 @@ public class MaintenanceServiceImplTest
         .thenReturn(false);
 
     underTest.deleteComponent(mavenReleases, component);
+  }
+
+  @Test
+  public void testDeleteFolder() {
+    ThreadContext.bind(FakeAlmightySubject.forUserId("disabled-security"));
+    when(repositoryPermissionChecker.userCanDeleteInRepository(mavenReleases)).thenReturn(true);
+
+    underTest.deleteFolder(mavenReleases, "someFolder");
+
+    verify(deleteFolderService, timeout(500)).deleteFolder(eq(mavenReleases), eq("someFolder"), any(DateTime.class), any());
+  }
+
+  @Test(expected = AuthorizationException.class)
+  public void testDeleteFolder_NotAuthorized() {
+    when(contentPermissionChecker.isPermitted("maven-releases", "maven2", BreadActions.DELETE, variableSource))
+        .thenReturn(false);
+    underTest.deleteFolder(mavenReleases, "somePath");
   }
 }

@@ -15,6 +15,7 @@ package org.sonatype.nexus.security.internal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -26,6 +27,7 @@ import org.sonatype.nexus.common.event.EventManager;
 import org.sonatype.nexus.common.stateguard.Guarded;
 import org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport;
 import org.sonatype.nexus.security.UserPrincipalsExpired;
+import org.sonatype.nexus.security.authc.UserPasswordChanged;
 import org.sonatype.nexus.security.authz.AuthorizationConfigurationChanged;
 import org.sonatype.nexus.security.realm.RealmConfiguration;
 import org.sonatype.nexus.security.realm.RealmConfigurationChangedEvent;
@@ -35,6 +37,8 @@ import org.sonatype.nexus.security.realm.RealmManager;
 
 import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
+import org.apache.shiro.authc.AuthenticationInfo;
+import org.apache.shiro.authz.AuthorizationInfo;
 import org.apache.shiro.cache.Cache;
 import org.apache.shiro.mgt.RealmSecurityManager;
 import org.apache.shiro.realm.AuthenticatingRealm;
@@ -42,6 +46,7 @@ import org.apache.shiro.realm.AuthorizingRealm;
 import org.apache.shiro.realm.Realm;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Collections.emptyList;
 import static org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport.State.STARTED;
 
 /**
@@ -302,6 +307,30 @@ public class RealmManagerImpl
   }
 
   /**
+   * Handles a user password change event
+   * @param event
+   */
+  @Subscribe
+  public void onEvent(final UserPasswordChanged event) {
+    clearAuthcRealmCacheForUserId(event.getUserId());
+  }
+
+  /**
+   * Clear the authentication cache for the given userId as a result of a password change.
+   */
+  private void clearAuthcRealmCacheForUserId(final String userId) {
+    // NOTE: we don't need to iterate all the Sec Managers, they use the same Realms, so one is fine.
+    Optional.of(realmSecurityManager)
+        .map(RealmSecurityManager::getRealms)
+        .orElse(emptyList())
+        .stream()
+        .filter(realm -> realm instanceof AuthenticatingRealmImpl)
+        .map(realm -> (AuthenticatingRealmImpl) realm)
+        .findFirst()
+        .ifPresent(realm -> realm.clearCache(userId));
+  }
+
+  /**
    * Looks up registered {@link AuthenticatingRealm}s, and clears their authc caches if they have it set.
    */
   private void clearAuthcRealmCaches() {
@@ -310,7 +339,7 @@ public class RealmManagerImpl
     if (realms != null) {
       for (Realm realm : realms) {
         if (realm instanceof AuthenticatingRealm) {
-          Cache cache = ((AuthenticatingRealm) realm).getAuthenticationCache();
+          Cache<Object, AuthenticationInfo> cache = ((AuthenticatingRealm) realm).getAuthenticationCache();
           if (cache != null) {
             log.debug("Clearing cache: {}", cache);
             cache.clear();
@@ -329,7 +358,7 @@ public class RealmManagerImpl
     if (realms != null) {
       for (Realm realm : realms) {
         if (realm instanceof AuthorizingRealm) {
-          Cache cache = ((AuthorizingRealm) realm).getAuthorizationCache();
+          Cache<Object, AuthorizationInfo> cache = ((AuthorizingRealm) realm).getAuthorizationCache();
           if (cache != null) {
             log.debug("Clearing cache: {}", cache);
             cache.clear();

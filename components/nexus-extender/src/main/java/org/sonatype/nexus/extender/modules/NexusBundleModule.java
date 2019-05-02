@@ -23,7 +23,6 @@ import org.sonatype.nexus.validation.ValidationModule;
 import com.google.common.base.Strings;
 import com.google.inject.Module;
 import org.apache.shiro.guice.aop.ShiroAopModule;
-import org.eclipse.sisu.bean.LifecycleModule;
 import org.eclipse.sisu.inject.MutableBeanLocator;
 import org.eclipse.sisu.launch.BundleModule;
 import org.eclipse.sisu.space.BeanScanning;
@@ -61,14 +60,14 @@ public class NexusBundleModule
 
   private final List<TypeConverterSupport> converterModules;
 
-  private final LifecycleModule lifecycleModule;
-
   private final String imports;
 
-  public NexusBundleModule(final Bundle bundle, final MutableBeanLocator locator, final Map<?, ?> nexusProperties,
+  public NexusBundleModule(final Bundle bundle,
+                           final MutableBeanLocator locator,
+                           final Map<?, ?> nexusProperties,
                            final ServletContextModule servletContextModule,
                            final List<AbstractInterceptorModule> interceptorModules,
-                           final List<TypeConverterSupport> converterModules, final LifecycleModule lifecycleModule)
+                           final List<TypeConverterSupport> converterModules)
   {
     super(bundle, locator);
 
@@ -76,7 +75,6 @@ public class NexusBundleModule
     this.servletContextModule = servletContextModule;
     this.interceptorModules = interceptorModules;
     this.converterModules = converterModules;
-    this.lifecycleModule = lifecycleModule;
 
     imports = Strings.nullToEmpty(bundle.getHeaders().get(Constants.IMPORT_PACKAGE));
   }
@@ -109,31 +107,31 @@ public class NexusBundleModule
     return new SpaceModule(space, BeanScanning.GLOBAL_INDEX);
   }
 
-  private void maybeAddSecurityFilter(List<Module> modules) {
+  private void maybeAddSecurityFilter(final List<Module> modules) {
     if (imports.contains("org.sonatype.nexus.security")) {
       modules.add(securityFilterModule);
     }
   }
 
-  private void maybeAddServletContext(List<Module> modules) {
+  private void maybeAddServletContext(final List<Module> modules) {
     if (imports.contains("com.google.inject.servlet")) {
       modules.add(servletContextModule);
     }
   }
 
-  private void maybeAddMetricsRegistry(List<Module> modules) {
+  private void maybeAddMetricsRegistry(final List<Module> modules) {
     if (imports.contains("com.codahale.metrics")) {
       modules.add(metricsRegistryModule);
     }
   }
 
-  private void maybeAddWebResources(List<Module> modules) {
+  private void maybeAddWebResources(final List<Module> modules) {
     if (space.getBundle().getEntry("static") != null) {
       modules.add(webResourcesModule);
     }
   }
 
-  private void addInterceptors(List<Module> modules) {
+  private void addInterceptors(final List<Module> modules) {
     modules.add(shiroAopModule);
     modules.add(instrumentationModule);
     modules.add(validationModule);
@@ -141,7 +139,5 @@ public class NexusBundleModule
     for (AbstractInterceptorModule aim : interceptorModules) {
       modules.add(aim);
     }
-
-    modules.add(lifecycleModule);
   }
 }

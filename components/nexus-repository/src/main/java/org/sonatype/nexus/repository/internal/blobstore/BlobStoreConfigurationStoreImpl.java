@@ -13,6 +13,7 @@
 package org.sonatype.nexus.repository.internal.blobstore;
 
 import java.util.List;
+import java.util.Optional;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -82,9 +83,29 @@ public class BlobStoreConfigurationStoreImpl
 
   @Override
   @Guarded(by = STARTED)
+  public void update(final BlobStoreConfiguration configuration) {
+    checkNotNull(configuration);
+
+    inTxRetry(databaseInstance).run(db -> entityAdapter.update(db, configuration));
+  }
+
+  @Override
+  @Guarded(by = STARTED)
   public void delete(final BlobStoreConfiguration configuration) {
     checkNotNull(configuration);
 
     inTxRetry(databaseInstance).run(db -> entityAdapter.deleteEntity(db, configuration));
+  }
+
+  @Override
+  @Guarded(by = STARTED)
+  public BlobStoreConfiguration read(final String name) {
+      return inTx(databaseInstance).call(db -> entityAdapter.getByName(db, name));
+  }
+
+  @Override
+  @Guarded(by = STARTED)
+  public Optional<BlobStoreConfiguration> findParent(final String name) {
+    return inTx(databaseInstance).call(db -> entityAdapter.getParent(db, name));
   }
 }

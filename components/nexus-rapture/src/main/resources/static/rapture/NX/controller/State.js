@@ -23,7 +23,8 @@ Ext.define('NX.controller.State', {
     'Ext.direct.Manager',
     'NX.Dialogs',
     'NX.Messages',
-    'NX.I18n'
+    'NX.I18n',
+    'Ext.Ajax'
   ],
 
   models: [
@@ -76,15 +77,6 @@ Ext.define('NX.controller.State', {
         }
       }
     });
-
-    me.addEvents(
-        /**
-         * Fires when any of application context values changes.
-         *
-         * @event changed
-         */
-        'changed'
-    );
   },
 
   /**
@@ -147,35 +139,44 @@ Ext.define('NX.controller.State', {
    */
   setValue: function (key, value, hash) {
     var me = this,
-        model = me.getStore('State').getById(key);
+        store = me.getStore('State'),
+        model = store.getById(key),
+        hasValue = Ext.isDefined(value) && value !== null;
 
-    if (!model) {
-      if (Ext.isDefined(value)) {
-        me.getStore('State').add(me.getStateModel().create({ key: key, value: value, hash: hash }));
+    if (!hasValue && model) {
+      store.remove(model);
+    }
+    else if (hasValue && !model) {
+      store.add(me.getStateModel().create({ key: key, value: value, hash: hash }));
+    }
+    else if (hash && !Ext.Object.equals(hash, model.get('hash'))) {
+      model.set('hash', hash);
+
+      if (key === 'user' && model.get('value').id === value.id) {
+        model.set('value', value, { silent: true });
+        me.fireEvent('userAuthenticated', key, value);
+      }
+
+      if (!Ext.Object.equals(value, model.get('value'))) {
+        model.set('value', value);
       }
     }
-    else {
-      if (Ext.isDefined(value) && value !== null) {
-        if (!Ext.Object.equals(value, model.get('value'))) {
-          model.set('value', value);
-        }
-        if (!Ext.Object.equals(hash, model.get('hash'))) {
-          model.set('hash', hash);
-        }
-      }
-      else {
-        me.getStore('State').remove(model);
-      }
+    else if (!hash && hasValue) {
+      model.set('hash', hash);
+      model.set('value', value);
     }
-    me.getStore('State').commitChanges();
+
+    store.commitChanges();
+
     if (me.statusProvider) {
-      if (Ext.isDefined(value) && hash) {
+      if (hasValue && hash) {
         me.statusProvider.baseParams[key] = hash;
       }
       else {
         delete me.statusProvider.baseParams[key];
       }
     }
+
   },
 
   setValues: function (map) {
@@ -213,8 +214,10 @@ Ext.define('NX.controller.State', {
     }
   },
 
-  onEntryRemoved: function (store, model) {
-    this.notifyChange(model.get('key'), undefined, model.get('value'));
+  onEntryRemoved: function (store, models) {
+    models.forEach(function(model) {
+      this.notifyChange(model.get('key'), undefined, model.get('value'));
+    }, this);
   },
 
   notifyChange: function (key, value, oldValue) {
@@ -278,6 +281,9 @@ Ext.define('NX.controller.State', {
         //<if debug>
         me.logDebug('State pooling configured for', newStatusInterval, 'seconds');
         //</if>
+
+        // fire one request for state manually to not wait for the polling interval
+        me.refreshNow();
       }
     }
     else {
@@ -413,6 +419,20 @@ Ext.define('NX.controller.State', {
    */
   refreshNow: function () {
     var me = this;
+
+    // directly query for state
+    Ext.Ajax.request({
+      url: NX.direct.api.POLLING_URLS.rapture_State_get,
+      scope: me,
+      success: function(response) {
+        var text = response && response.responseText;
+
+        if (text != null) {
+          me.onServerData(null, Ext.isObject(text) || Ext.isArray(text) ? text : Ext.decode(text));
+        }
+      }
+    });
+
     if (me.statusProvider) {
       me.statusProvider.disconnect();
       me.statusProvider.connect();
@@ -440,7 +460,7 @@ Ext.define('NX.controller.State', {
   },
 
   reloadWhenServerIdChanged: function (serverId, oldServerId) {
-    if (oldServerId && (serverId !== oldServerId) && !serverId.startsWith('ignore')) {
+    if (oldServerId && (serverId !== oldServerId) && !Ext.String.startsWith(serverId, 'ignore')) {
       // FIXME: i18n
       NX.Dialogs.showInfo(
           'Server restarted',

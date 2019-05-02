@@ -17,12 +17,15 @@ import javax.inject.Named
 import javax.inject.Singleton
 import javax.validation.ValidationException
 
-import org.sonatype.nexus.coreui.internal.search.SearchContribution
 import org.sonatype.nexus.extdirect.DirectComponent
 import org.sonatype.nexus.extdirect.DirectComponentSupport
 import org.sonatype.nexus.extdirect.model.LimitedPagedResponse
 import org.sonatype.nexus.extdirect.model.PagedResponse
 import org.sonatype.nexus.extdirect.model.StoreLoadParameters
+import org.sonatype.nexus.repository.rest.SearchUtils
+import org.sonatype.nexus.repository.search.SearchFilter
+import org.sonatype.nexus.repository.search.SearchResultComponent
+import org.sonatype.nexus.repository.search.SearchResultsGenerator
 import org.sonatype.nexus.repository.search.SearchService
 
 import com.codahale.metrics.annotation.ExceptionMetered
@@ -31,17 +34,7 @@ import com.softwarementors.extjs.djn.config.annotations.DirectAction
 import com.softwarementors.extjs.djn.config.annotations.DirectMethod
 import org.apache.shiro.authz.annotation.RequiresPermissions
 import org.elasticsearch.action.search.SearchResponse
-import org.elasticsearch.index.query.BoolQueryBuilder
 import org.elasticsearch.index.query.QueryBuilder
-import org.elasticsearch.index.query.QueryBuilders
-import org.elasticsearch.search.sort.SortOrder
-
-import static org.elasticsearch.search.sort.SortBuilders.fieldSort
-import static org.sonatype.nexus.repository.search.DefaultComponentMetadataProducer.FORMAT
-import static org.sonatype.nexus.repository.search.DefaultComponentMetadataProducer.GROUP
-import static org.sonatype.nexus.repository.search.DefaultComponentMetadataProducer.NAME
-import static org.sonatype.nexus.repository.search.DefaultComponentMetadataProducer.REPOSITORY_NAME
-import static org.sonatype.nexus.repository.search.DefaultComponentMetadataProducer.VERSION
 
 /**
  * Search {@link DirectComponent}.
@@ -58,11 +51,14 @@ class SearchComponent
   SearchService searchService
 
   @Inject
-  Map<String, SearchContribution> searchContributions
+  SearchUtils searchUtils
 
   @Inject
   @Named('${nexus.searchResultsLimit:-1000}')
   long searchResultsLimit
+
+  @Inject
+  SearchResultsGenerator searchResultsGenerator
 
   /**
    * Search based on configured filters.
@@ -75,45 +71,40 @@ class SearchComponent
   @ExceptionMetered
   @RequiresPermissions('nexus:search:read')
   PagedResponse<ComponentXO> read(StoreLoadParameters parameters) {
-    QueryBuilder query = buildQuery(parameters)
+    if (parameters.limit > searchResultsLimit) {
+      parameters.limit = searchResultsLimit
+    }
+
+    Collection<SearchFilter> searchFilters = parameters.filters.collect {
+      new SearchFilter(it.property, it.value)
+    }
+    QueryBuilder query = searchUtils.buildQuery(searchFilters)
+
     if (!query) {
       return null
+    }
+    else {
+      log.debug("UI Search Query {}", query);
     }
 
     try {
       def sort = parameters?.sort?.get(0)
-      def sortBuilders = []
-      if (sort) {
-        switch (sort.property) {
-          case GROUP:
-            sortBuilders << fieldSort("${GROUP}.case_insensitive").order(SortOrder.valueOf(sort.direction))
-            sortBuilders << fieldSort("${NAME}.case_insensitive").order(SortOrder.ASC)
-            sortBuilders << fieldSort(VERSION).order(SortOrder.ASC)
-            break
-          case NAME:
-            sortBuilders << fieldSort("${NAME}.case_insensitive").order(SortOrder.valueOf(sort.direction))
-            sortBuilders << fieldSort(VERSION).order(SortOrder.ASC)
-            sortBuilders << fieldSort("${GROUP}.case_insensitive").order(SortOrder.ASC)
-            break
-          case 'repositoryName':
-            sortBuilders = [fieldSort(REPOSITORY_NAME).order(SortOrder.valueOf(sort.direction))]
-            break
-          default:
-            sortBuilders = [fieldSort(sort.property).order(SortOrder.valueOf(sort.direction))]
-        }
-      }
-      SearchResponse response = searchService.search(query, sortBuilders, parameters.start, parameters.limit)
+
+      SearchResponse response = searchService.search(query,
+          searchUtils.getSortBuilders(sort?.property, sort?.direction), parameters.start, parameters.limit)
+      List<SearchResultComponent> searchResultComponents = searchResultsGenerator.getSearchResultList(response)
+
       return new LimitedPagedResponse<ComponentXO>(
-          searchResultsLimit,
-          response.hits.totalHits,
-          response.hits.hits?.collect { hit ->
-            return new ComponentXO(
-                id: hit.id,
-                repositoryName: hit.source[REPOSITORY_NAME],
-                group: hit.source[GROUP],
-                name: hit.source[NAME],
-                version: hit.source[VERSION],
-                format: hit.source[FORMAT]
+          Math.min(parameters.limit, searchResultComponents.size()),
+          (parameters.limit < response.hits.totalHits()) ? response.hits.totalHits() : searchResultComponents.size(),
+          searchResultComponents.collect { searchResultComponent ->
+            new ComponentXO(
+                id: searchResultComponent.id,
+                repositoryName: searchResultComponent.repositoryName,
+                group: searchResultComponent.group,
+                name: searchResultComponent.name,
+                version: searchResultComponent.version,
+                format: searchResultComponent.format
             )
           }
       )
@@ -121,26 +112,5 @@ class SearchComponent
     catch (IllegalArgumentException e) {
       throw new ValidationException(e.getMessage())
     }
-  }
-
-  /**
-   * Builds a QueryBuilder based on configured filters.
-   *
-   * @param parameters store parameters
-   */
-  private QueryBuilder buildQuery(final StoreLoadParameters parameters) {
-    BoolQueryBuilder query = QueryBuilders.boolQuery()
-    parameters.filters?.each { filter ->
-      SearchContribution contribution = searchContributions[filter.property]
-      if (!contribution) {
-        contribution = searchContributions['default']
-      }
-      contribution.contribute(query, filter.property, filter.value)
-    }
-    if (!query.hasClauses()) {
-      return null;
-    }
-    log.debug('Query: {}', query)
-    return query
   }
 }

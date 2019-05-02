@@ -116,8 +116,8 @@ public class RawUploadHandlerTest
 
     assertThat(def.isMultipleUpload(), is(true));
     assertThat(def.getComponentFields(), contains(field("directory", "Directory",
-        "Destination for uploaded files (e.g. /path/to/files/)", false, STRING)));
-    assertThat(def.getAssetFields(), contains(field("filename", "Filename", null, false, STRING)));
+        "Destination for uploaded files (e.g. /path/to/files/)", false, STRING, "Component attributes")));
+    assertThat(def.getAssetFields(), contains(field("filename", "Filename", null, false, STRING, null)));
   }
 
   @Test
@@ -127,9 +127,10 @@ public class RawUploadHandlerTest
     UploadDefinition def = underTest.getDefinition();
 
     assertThat(def.getComponentFields(),
-        contains(field("directory", "Directory", "Destination for uploaded files (e.g. /path/to/files/)", false, STRING),
-            field("foo", "Foo", null, true, STRING)));
-    assertThat(def.getAssetFields(), contains(field("filename", "Filename", null, false, STRING)));
+        contains(
+            field("directory", "Directory", "Destination for uploaded files (e.g. /path/to/files/)", false, STRING, "Component attributes"),
+            field("foo", "Foo", null, true, STRING, "bar")));
+    assertThat(def.getAssetFields(), contains(field("filename", "Filename", null, false, STRING, null)));
   }
 
   @Test
@@ -209,6 +210,126 @@ public class RawUploadHandlerTest
   }
 
   @Test
+  public void testHandle_dotDirectory() throws IOException {
+    ComponentUpload component = new ComponentUpload();
+    component.getFields().put("directory", ".");
+
+    AssetUpload asset = new AssetUpload();
+    asset.getFields().put("filename", "foo.jar");
+    asset.setPayload(jarPayload);
+    component.getAssetUploads().add(asset);
+
+    try {
+      underTest.handle(repository, component);
+      fail("Expected validation exception");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(), is("Path is not allowed to have '.' or '..' segments: './foo.jar'"));
+    }
+  }
+
+  @Test
+  public void testHandle_doubleDotDirectory() throws IOException {
+    ComponentUpload component = new ComponentUpload();
+    component.getFields().put("directory", "..");
+
+    AssetUpload asset = new AssetUpload();
+    asset.getFields().put("filename", "foo.jar");
+    asset.setPayload(jarPayload);
+    component.getAssetUploads().add(asset);
+
+    try {
+      underTest.handle(repository, component);
+      fail("Expected validation exception");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(), is("Path is not allowed to have '.' or '..' segments: '../foo.jar'"));
+    }
+  }
+
+  @Test
+  public void testHandle_covertDoubleDotDirectory() throws IOException {
+    ComponentUpload component = new ComponentUpload();
+    component.getFields().put("directory", "foo/..");
+
+    AssetUpload asset = new AssetUpload();
+    asset.getFields().put("filename", "foo.jar");
+    asset.setPayload(jarPayload);
+    component.getAssetUploads().add(asset);
+
+    try {
+      underTest.handle(repository, component);
+      fail("Expected validation exception");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(), is("Path is not allowed to have '.' or '..' segments: 'foo/../foo.jar'"));
+    }
+  }
+
+  @Test
+  public void testHandle_dotFilename() throws IOException {
+    ComponentUpload component = new ComponentUpload();
+    component.getFields().put("directory", "foo");
+
+    AssetUpload asset = new AssetUpload();
+    asset.getFields().put("filename", ".");
+    asset.setPayload(jarPayload);
+    component.getAssetUploads().add(asset);
+
+    try {
+      underTest.handle(repository, component);
+      fail("Expected validation exception");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(), is("Path is not allowed to have '.' or '..' segments: 'foo/.'"));
+    }
+  }
+
+  @Test
+  public void testHandle_doubleDotFilename() throws IOException {
+    ComponentUpload component = new ComponentUpload();
+    component.getFields().put("directory", "foo");
+
+    AssetUpload asset = new AssetUpload();
+    asset.getFields().put("filename", "..");
+    asset.setPayload(jarPayload);
+    component.getAssetUploads().add(asset);
+
+    try {
+      underTest.handle(repository, component);
+      fail("Expected validation exception");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(), is("Path is not allowed to have '.' or '..' segments: 'foo/..'"));
+    }
+  }
+
+  @Test
+  public void testHandle_covertDoubleDotFilename() throws IOException {
+    ComponentUpload component = new ComponentUpload();
+    component.getFields().put("directory", "foo");
+
+    AssetUpload asset = new AssetUpload();
+    asset.getFields().put("filename", "foo/../../foo.jar");
+    asset.setPayload(jarPayload);
+    component.getAssetUploads().add(asset);
+
+    try {
+      underTest.handle(repository, component);
+      fail("Expected validation exception");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(), is("Path is not allowed to have '.' or '..' segments: 'foo/foo/../../foo.jar'"));
+    }
+  }
+
+  @Test
   public void testHandle_normalizePath() throws IOException {
     testNormalizePath("/", "goo.jar", "goo.jar");
     testNormalizePath("/foo", "goo.jar", "foo/goo.jar");
@@ -256,9 +377,10 @@ public class RawUploadHandlerTest
                                       final String displayName,
                                       final String helpText,
                                       final boolean optional,
-                                      final Type type)
+                                      final Type type,
+                                      final String group)
   {
-    return new UploadFieldDefinition(name, displayName, helpText, optional, type);
+    return new UploadFieldDefinition(name, displayName, helpText, optional, type, group);
   }
 
   private Set<UploadDefinitionExtension> getDefinitionExtensions() {
@@ -269,7 +391,7 @@ public class RawUploadHandlerTest
 
     @Override
     public UploadFieldDefinition contribute() {
-      return new UploadFieldDefinition("foo", "Foo", null, true, Type.STRING);
+      return new UploadFieldDefinition("foo", "Foo", null, true, Type.STRING, "bar");
     }
   }
 }

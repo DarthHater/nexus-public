@@ -41,12 +41,15 @@ Ext.define('NX.app.PluginStrings', {
     Button_Next: 'Next',
     Button_Save: 'Save',
 
+    Column_No_Data: 'No data',
+
     // Header
-    Header_Panel_Logo_Text: 'Nexus Repository Manager',
+    Header_Panel_Logo_Text: 'Sonatype Nexus Repository Manager',
     Header_BrowseMode_Title: 'Browse',
     Header_BrowseMode_Tooltip: 'Browse server contents',
     Header_AdminMode_Title: 'Administration',
     Header_AdminMode_Tooltip: 'Server administration and configuration',
+    Header_Health_Tooltip: 'System Status',
     Header_QuickSearch_Empty: 'Search components',
     Header_QuickSearch_Tooltip: 'Quick component keyword search',
     Header_Refresh_Tooltip: 'Refresh current view and data',
@@ -166,18 +169,29 @@ Ext.define('NX.app.PluginStrings', {
 
     // Browse -> Welcome
     Dashboard_Title: 'Welcome',
-    Dashboard_Description: 'Welcome to Nexus Repository Manager!',
+    Dashboard_Description: 'Learn about Sonatype Nexus Repository Manager',
 
     // Field validation messages
     Util_Validator_Text: 'Only letters, digits, underscores(_), hyphens(-), and dots(.) are allowed and may not start with underscore or dot.',
     Util_Validator_Hostname: 'Hostname must be valid',
     Util_Validator_Trim: 'A Role ID may not start or end with a space.',
+    Util_Validator_Url: 'This field should be a URL in the format "http://www.example.com"',
 
     // Wizard
     Wizard_Next: '@Button_Next',
     Wizard_Back: '@Button_Back',
     Wizard_Cancel: '@Button_Cancel',
-    Wizard_Screen_Progress: '{0} of {1}'
+    Wizard_Screen_Progress: '{0} of {1}',
+
+    // SearchBoxTip
+    SearchBoxTip_ExactMatch: 'Use <b>""</b> for exact match - "example"',
+    SearchBoxTip_Wildcard: 'Use <b>*</b> or <b>?</b> for wildcards - ex?mpl*',
+    SearchBoxTip_LearnMore: 'Learn more...',
+
+    // DependencySnippet Panel
+    DependencySnippetPanel_Title: 'Usage',
+    DependencySnippetPanel_Copy_Button_Tooltip: 'Copy snippet to clipboard'
+
   }
 }, function(obj) {
   NX.I18n.register(obj);

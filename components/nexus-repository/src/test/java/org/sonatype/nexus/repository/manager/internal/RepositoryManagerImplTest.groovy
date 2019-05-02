@@ -40,30 +40,47 @@ import org.mockito.ArgumentCaptor
 import org.mockito.Mock
 
 import static com.google.common.collect.Lists.asList
-import static com.google.common.collect.Lists.newArrayList
+import static com.google.common.collect.Maps.newHashMap
 import static java.util.Collections.emptyList
 import static java.util.Collections.singletonList
+import static java.util.UUID.randomUUID
+import static java.util.stream.Collectors.toList
 import static org.fest.assertions.api.Assertions.assertThat
+import static org.hamcrest.Matchers.contains
+import static org.hamcrest.Matchers.empty
+import static org.hamcrest.Matchers.equalTo
 import static org.hamcrest.Matchers.instanceOf
 import static org.junit.Assert.assertFalse
 import static org.mockito.Matchers.any
 import static org.mockito.Matchers.isA
 import static org.mockito.Mockito.atLeastOnce
+import static org.mockito.Mockito.mock
 import static org.mockito.Mockito.never
 import static org.mockito.Mockito.times
 import static org.mockito.Mockito.verify
 import static org.mockito.Mockito.when
 import static org.sonatype.nexus.blobstore.api.BlobStoreManager.DEFAULT_BLOBSTORE_NAME
+import static org.sonatype.nexus.repository.manager.internal.RepositoryManagerImpl.CLEANUP_ATTRIBUTES_KEY
+import static org.sonatype.nexus.repository.manager.internal.RepositoryManagerImpl.CLEANUP_NAME_KEY
 
 class RepositoryManagerImplTest
     extends TestSupport
 {
+  static final String GROUP_NAME = 'group'
+
+  static final String PARENT_GROUP_NAME = 'parentGroup'
+
+  static final String CYCLE_A_NAME = 'cycleA'
+
+  static final String CYCLE_B_NAME = 'cycleB'
 
   static final String MAVEN_CENTRAL_NAME = 'maven-central'
 
   static final String APACHE_SNAPSHOTS_NAME = 'apache-snapshots'
 
-  List<String> groupMembers
+  static final String THIRD_PARTY_NAME = 'third-party'
+
+  static final String UNGROUPED_REPO_NAME = 'upgrouped'
 
   @Mock
   EventManager eventManager
@@ -112,6 +129,30 @@ class RepositoryManagerImplTest
   @Mock
   Repository groupRepository
 
+  @Mock
+  Configuration parentGroupConfiguration
+
+  @Mock
+  Repository parentGroupRepository
+
+  @Mock
+  Configuration cycleGroupAConfiguration
+
+  @Mock
+  Repository cycleGroupA
+
+  @Mock
+  Configuration cycleGroupBConfiguration
+
+  @Mock
+  Repository cycleGroupB
+
+  @Mock
+  Configuration ungroupedRepoConfiguration
+
+  @Mock
+  Repository ungroupedRepository
+
   //Recipe for creating repositories
   @Mock
   Recipe recipe
@@ -134,13 +175,10 @@ class RepositoryManagerImplTest
   BlobStoreManager blobStoreManager
 
   @Mock
-  GroupFacet groupFacet
-
-  @Mock
-  NestedAttributesMap groupAttributesMap
-
-  @Mock
   EntityMetadata entityMetadata
+
+  @Mock
+  GroupMemberMappingCache groupMemberMappingCache
 
   //Subject of the test
   RepositoryManagerImpl repositoryManager
@@ -160,29 +198,49 @@ class RepositoryManagerImplTest
   private void setupRepositories() {
     when(defaultRepositoriesContributor.getRepositoryConfigurations()).
         thenReturn(asList(mavenCentralConfiguration, apacheSnapshotsConfiguration, thirdPartyConfiguration,
-            groupConfiguration))
+            groupConfiguration, parentGroupConfiguration, cycleGroupAConfiguration, cycleGroupBConfiguration,
+            ungroupedRepoConfiguration))
     defaultRepositoriesContributorList = singletonList(defaultRepositoriesContributor)
 
     mockRepository(mavenCentralConfiguration, mavenCentralRepository, MAVEN_CENTRAL_NAME, 'default')
     mockRepository(apacheSnapshotsConfiguration, apacheSnapshotsRepository, APACHE_SNAPSHOTS_NAME, 'default')
-    mockRepository(thirdPartyConfiguration, thirdPartyRepository, 'third-party', 'third-party')
-    mockRepository(groupConfiguration, groupRepository, 'group', 'group')
+    mockRepository(thirdPartyConfiguration, thirdPartyRepository, THIRD_PARTY_NAME, 'third-party')
+    mockRepository(groupConfiguration, groupRepository, GROUP_NAME, 'group')
+    mockRepository(parentGroupConfiguration, parentGroupRepository, PARENT_GROUP_NAME, 'group')
+    mockRepository(cycleGroupAConfiguration, cycleGroupA, CYCLE_A_NAME, 'group')
+    mockRepository(cycleGroupBConfiguration, cycleGroupB, CYCLE_B_NAME, 'group')
+    mockRepository(ungroupedRepoConfiguration, ungroupedRepository, UNGROUPED_REPO_NAME, 'default')
 
     when(repositoryFactory.create(type, format)).
-        thenReturn(mavenCentralRepository, apacheSnapshotsRepository, thirdPartyRepository, groupRepository)
+        thenReturn(mavenCentralRepository,
+            apacheSnapshotsRepository,
+            thirdPartyRepository,
+            groupRepository,
+            parentGroupRepository,
+            cycleGroupA,
+            cycleGroupB,
+            ungroupedRepository)
 
-    setupGroupRepository()
+    when(groupType.getValue()).thenReturn("group")
+    setupGroupRepository(groupRepository, groupConfiguration, mavenCentralRepository, apacheSnapshotsRepository)
+    setupGroupRepository(parentGroupRepository, parentGroupConfiguration, groupRepository)
+    setupGroupRepository(cycleGroupA, cycleGroupAConfiguration, cycleGroupB, apacheSnapshotsRepository)
+    setupGroupRepository(cycleGroupB, cycleGroupBConfiguration, cycleGroupA, apacheSnapshotsRepository)
   }
 
-  private void setupGroupRepository() {
-    groupMembers = newArrayList(MAVEN_CENTRAL_NAME, "apache-snapshots")
-    when(groupRepository.optionalFacet(GroupFacet.class)).thenReturn(Optional.of(groupFacet))
-    when(groupFacet.member(mavenCentralRepository)).thenReturn(true)
-    when(groupFacet.member(apacheSnapshotsRepository)).thenReturn(true)
-    when(groupRepository.getType()).thenReturn(groupType)
-    when(groupType.getValue()).thenReturn("group")
-    when(groupConfiguration.attributes("group")).thenReturn(groupAttributesMap)
-    when(groupAttributesMap.get("memberNames", Collection.class)).thenReturn(groupMembers)
+  private void setupGroupRepository(Repository repository, Configuration configuration, Repository... members) {
+    List<Repository> memberRepos = Arrays.asList(members)
+    GroupFacet facet = mock(GroupFacet.class)
+    NestedAttributesMap attributesMap = mock(NestedAttributesMap.class)
+    when(repository.optionalFacet(GroupFacet.class)).thenReturn(Optional.of(facet))
+    when(repository.getType()).thenReturn(groupType)
+    when(configuration.attributes("group")).thenReturn(attributesMap)
+    List<String> memberNames = memberRepos.stream().map({it.name}).collect()
+    when(attributesMap.get("memberNames", Collection.class)).thenReturn(memberNames)
+    for (Repository memberRepo : memberRepos) {
+      when(facet.member(memberRepo)).thenReturn(true)
+    }
+    when(facet.members()).thenReturn(memberRepos)
   }
 
   private void mockRepository(Configuration configuration, Repository repository, String name, String blobstoreName) {
@@ -200,7 +258,8 @@ class RepositoryManagerImplTest
     if (defaultsConfigured) {
       when(configurationStore.list()).
           thenReturn(asList(mavenCentralConfiguration, apacheSnapshotsConfiguration, thirdPartyConfiguration,
-              groupConfiguration))
+              groupConfiguration, parentGroupConfiguration, cycleGroupAConfiguration, cycleGroupBConfiguration,
+              ungroupedRepoConfiguration))
     }
 
     return initializeAndStartRepositoryManager(skipDefaultRepositories)
@@ -209,7 +268,8 @@ class RepositoryManagerImplTest
   private RepositoryManagerImpl initializeAndStartRepositoryManager(boolean skipDefaultRepositories) {
     repositoryManager = new RepositoryManagerImpl(eventManager, configurationStore, repositoryFactory,
         configurationFacetProvider, ImmutableMap.of(recipeName, recipe), securityContributor,
-        defaultRepositoriesContributorList, databaseFreezeService, skipDefaultRepositories, blobStoreManager)
+        defaultRepositoriesContributorList, databaseFreezeService, skipDefaultRepositories, blobStoreManager,
+        groupMemberMappingCache)
 
     repositoryManager.doStart()
     return repositoryManager
@@ -229,7 +289,7 @@ class RepositoryManagerImplTest
     when(configurationStore.list()).
         thenReturn(asList(mavenCentralConfiguration, apacheSnapshotsConfiguration, thirdPartyConfiguration))
 
-    assertThat(repositoryManager.browse()).hasSize(4)
+    assertThat(repositoryManager.browse()).hasSize(8)
 
     verify(mavenCentralRepository).init(mavenCentralConfiguration)
     verify(mavenCentralRepository).start()
@@ -297,7 +357,7 @@ class RepositoryManagerImplTest
   @Test
   void 'blobstoreUsageCount returns number of repositories using a blob store'() {
     repositoryManager = buildRepositoryManagerImpl(true)
-    assertThat(repositoryManager.blobstoreUsageCount("default")).isEqualTo(2)
+    assertThat(repositoryManager.blobstoreUsageCount("default")).isEqualTo(3)
     assertThat(repositoryManager.blobstoreUsageCount("third-party")).isEqualTo(1)
   }
 
@@ -311,7 +371,7 @@ class RepositoryManagerImplTest
   @Test
   void 'remove repository from any group repository configurations on delete'() {
     buildRepositoryManagerImpl(true).delete(MAVEN_CENTRAL_NAME)
-    assertFalse(groupMembers.contains(MAVEN_CENTRAL_NAME))
+    assertFalse(((Collection)groupConfiguration.attributes("group").get("memberNames", Collection.class)).contains(mavenCentralRepository))
   }
 
   @Test
@@ -352,5 +412,63 @@ class RepositoryManagerImplTest
     BucketUpdatedEvent bucketEvent = new BucketUpdatedEvent(entityMetadata, 'some-deleted-repo$uuid')
     repositoryManager.onBucketUpdated(bucketEvent)
     verify(eventManager, never()).post(isA(RepositoryMetadataUpdatedEvent))
+  }
+
+  @Test
+  void 'repository with cleanup policy is correctly loaded'() {
+    repositoryManager = buildRepositoryManagerImpl(true)
+
+    String name = randomUUID().toString().replace('-', '')
+
+    Map<String, Object> cleanupAttributes = newHashMap()
+    cleanupAttributes.put(CLEANUP_NAME_KEY, name)
+
+    mavenCentralConfiguration.attributes.put(CLEANUP_ATTRIBUTES_KEY, cleanupAttributes)
+
+    List<Repository> repositories = repositoryManager.browseForCleanupPolicy(name).collect(toList())
+
+    assertThat(repositories.size(), equalTo(1))
+    assertThat(repositories.get(0).configuration, equalTo(mavenCentralConfiguration))
+    assertThat(repositories
+        .get(0).configuration.attributes
+        .get(CLEANUP_ATTRIBUTES_KEY)
+        .get(CLEANUP_NAME_KEY).toString(),
+        equalTo(name))
+  }
+
+  @Test
+  void 'multi repository with same cleanup policy are correctly loaded'() {
+    repositoryManager = buildRepositoryManagerImpl(true)
+
+    String name = randomUUID().toString().replace('-', '')
+
+    Map<String, Object> cleanupAttributes = newHashMap()
+    cleanupAttributes.put(CLEANUP_NAME_KEY, name)
+
+    mavenCentralConfiguration.attributes.put(CLEANUP_ATTRIBUTES_KEY, cleanupAttributes)
+    apacheSnapshotsConfiguration.attributes.put(CLEANUP_ATTRIBUTES_KEY, cleanupAttributes)
+
+    List<Repository> repositories = repositoryManager.browseForCleanupPolicy(name).collect(toList())
+
+    assertThat(repositories.size(), equalTo(2))
+    assertThat(repositories.get(0).configuration, equalTo(mavenCentralConfiguration))
+    assertThat(repositories.get(1).configuration, equalTo(apacheSnapshotsConfiguration))
+  }
+
+  @Test
+  void 'no repositories are loaded for an unknown cleanup policy'() {
+    repositoryManager = buildRepositoryManagerImpl(true)
+
+    def stream = repositoryManager.browseForCleanupPolicy(randomUUID().toString())
+
+    assertThat(stream.count()).isEqualTo(0)
+  }
+
+  @Test
+  void 'member to group cache functions with no repositories'() {
+    repositoryManager = buildRepositoryManagerImpl(false, true)
+
+    //this would throw an NPE previously
+    repositoryManager.findContainingGroups('test')
   }
 }

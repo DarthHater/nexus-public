@@ -12,6 +12,7 @@
  */
 package org.sonatype.nexus.repository.storage;
 
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -40,11 +41,11 @@ import org.sonatype.nexus.repository.security.RepositoryViewPermission;
 import org.sonatype.nexus.repository.types.GroupType;
 import org.sonatype.nexus.security.BreadActions;
 import org.sonatype.nexus.security.SecurityHelper;
-import org.sonatype.nexus.selector.CselAssetSql;
-import org.sonatype.nexus.selector.CselAssetSqlBuilder;
 import org.sonatype.nexus.selector.CselSelector;
 import org.sonatype.nexus.selector.SelectorConfiguration;
+import org.sonatype.nexus.selector.SelectorEvaluationException;
 import org.sonatype.nexus.selector.SelectorManager;
+import org.sonatype.nexus.selector.SelectorSqlBuilder;
 
 import com.orientechnologies.common.concur.ONeedRetryException;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
@@ -72,8 +73,6 @@ public class BrowseNodeStoreImpl
     extends StateGuardLifecycleSupport
     implements BrowseNodeStore
 {
-  private static final String ASSET_FIELD_PREFIX = P_ASSET_ID + '.';
-
   private final Provider<DatabaseInstance> databaseInstance;
 
   private final BrowseNodeEntityAdapter entityAdapter;
@@ -82,39 +81,37 @@ public class BrowseNodeStoreImpl
 
   private final SelectorManager selectorManager;
 
-  private final CselAssetSqlBuilder cselAssetSqlBuilder;
-
   private final Map<String, BrowseNodeFilter> browseNodeFilters;
 
-  private final int deletePageSize;
+  private final Map<String, BrowseNodeComparator> browseNodeComparators;
 
-  private final boolean enabled;
+  private final BrowseNodeComparator defaultBrowseNodeComparator;
+
+  private final int deletePageSize;
 
   @Inject
   public BrowseNodeStoreImpl(@Named("component") final Provider<DatabaseInstance> databaseInstance,
                              final BrowseNodeEntityAdapter entityAdapter,
                              final SecurityHelper securityHelper,
                              final SelectorManager selectorManager,
-                             final CselAssetSqlBuilder cselAssetSqlBuilder,
                              final BrowseNodeConfiguration configuration,
-                             final Map<String, BrowseNodeFilter> browseNodeFilters)
+                             final Map<String, BrowseNodeFilter> browseNodeFilters,
+                             final Map<String, BrowseNodeComparator> browseNodeComparators)
   {
     this.databaseInstance = checkNotNull(databaseInstance);
     this.entityAdapter = checkNotNull(entityAdapter);
     this.securityHelper = checkNotNull(securityHelper);
     this.selectorManager = checkNotNull(selectorManager);
-    this.cselAssetSqlBuilder = checkNotNull(cselAssetSqlBuilder);
     this.browseNodeFilters = checkNotNull(browseNodeFilters);
+    this.browseNodeComparators = checkNotNull(browseNodeComparators);
     this.deletePageSize = configuration.getDeletePageSize();
-    this.enabled = configuration.isEnabled();
+    this.defaultBrowseNodeComparator = checkNotNull(browseNodeComparators.get(DefaultBrowseNodeComparator.NAME));
   }
 
   @Override
   protected void doStart() throws Exception {
-    if (enabled) {
-      try (ODatabaseDocumentTx db = databaseInstance.get().connect()) {
-        entityAdapter.register(db);
-      }
+    try (ODatabaseDocumentTx db = databaseInstance.get().connect()) {
+      entityAdapter.register(db);
     }
   }
 
@@ -193,9 +190,11 @@ public class BrowseNodeStoreImpl
     String assetFilter = buildAssetFilter(repository, keyword, selectors, filterParameters);
 
     BrowseNodeFilter filter = browseNodeFilters.getOrDefault(repository.getFormat().getValue(), (node, name) -> true);
+
+    List<BrowseNode> results;
     if (repository.getType() instanceof GroupType) {
       // overlay member results, first-one-wins if there are any nodes with the same name
-      return members(repository)
+      results = members(repository)
           .map(m -> getByPath(m.getName(), path, maxNodes, assetFilter, filterParameters))
           .flatMap(List::stream)
           .filter(distinctByName())
@@ -204,10 +203,14 @@ public class BrowseNodeStoreImpl
           .collect(toList());
     }
     else {
-      return getByPath(repository.getName(), path, maxNodes, assetFilter, filterParameters).stream()
+      results = getByPath(repository.getName(), path, maxNodes, assetFilter, filterParameters).stream()
           .filter(node -> filter.test(node, repositoryName))
           .collect(toList());
     }
+
+    results.sort(getBrowseNodeComparator(format));
+
+    return results;
   }
 
   /**
@@ -294,20 +297,35 @@ public class BrowseNodeStoreImpl
       filterBuilder.append('(');
     }
 
+    SelectorSqlBuilder sqlBuilder = new SelectorSqlBuilder()
+        .propertyAlias("path", P_ASSET_ID + ".name")
+        .propertyAlias("format", P_ASSET_ID + ".format")
+        .propertyPrefix(P_ASSET_ID + ".attributes." + format + ".");
+
     int cselCount = 0;
 
     for (SelectorConfiguration selector : selectors) {
       if (CselSelector.TYPE.equals(selector.getType())) {
-        if (cselCount > 0) {
-          filterBuilder.append(" or ");
+        try {
+          sqlBuilder.parameterPrefix("s" + cselCount + "p");
+
+          selectorManager.toSql(selector, sqlBuilder);
+
+          if (cselCount > 0) {
+            filterBuilder.append(" or ");
+          }
+
+          filterBuilder.append('(').append(sqlBuilder.getQueryString()).append(')');
+          filterParameters.putAll(sqlBuilder.getQueryParameters());
+
+          cselCount++;
         }
-
-        String expression = (String) selector.getAttributes().get("expression");
-        CselAssetSql cselAssetSql = cselAssetSqlBuilder.buildWhereClause(
-            expression, format, "s" + (cselCount++) + "p", ASSET_FIELD_PREFIX);
-        filterBuilder.append('(').append(cselAssetSql.getSql()).append(')');
-
-        filterParameters.putAll(cselAssetSql.getSqlParameters());
+        catch (SelectorEvaluationException e) {
+          log.warn("Problem evaluating selector {} as SQL", selector.getName(), e);
+        }
+        finally {
+          sqlBuilder.clearQueryString();
+        }
       }
     }
 
@@ -325,5 +343,9 @@ public class BrowseNodeStoreImpl
     if (selectors.size() > 1) {
       filterBuilder.append(')');
     }
+  }
+
+  private Comparator<BrowseNode> getBrowseNodeComparator(String format) {
+    return browseNodeComparators.getOrDefault(format, defaultBrowseNodeComparator);
   }
 }

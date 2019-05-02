@@ -48,6 +48,8 @@ public abstract class RepositoryTaskSupport
 {
   public static final String REPOSITORY_NAME_FIELD_ID = "repositoryName";
 
+  public static final String ALL_REPOSITORIES = "*";
+
   private RepositoryManager repositoryManager;
 
   private Type groupType;
@@ -89,11 +91,15 @@ public abstract class RepositoryTaskSupport
   private Iterable<Repository> findRepositories() {
     final String repositoryName = getRepositoryField();
     checkArgument(!Strings.isNullOrEmpty(repositoryName));
-    if ("*".equals(repositoryName)) {
+    if (ALL_REPOSITORIES.equals(repositoryName)) {
       return Iterables.filter(repositoryManager.browse(), this::appliesTo);
     }
     else {
-      Repository repository = checkNotNull(repositoryManager.get(repositoryName));
+      Repository repository = repositoryManager.get(repositoryName);
+      if (repository == null) {
+        log.warn("Repository '{}' was not found while running task '{}'", repositoryName, getMessage());
+        throw new TaskInterruptedException(String.format("Repository '%s' was not found.", repositoryName), true);
+      }
       checkState(appliesTo(repository));
       return ImmutableList.of(repository);
     }

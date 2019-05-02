@@ -21,7 +21,7 @@ Ext.define('NX.ext.form.field.ValueSet', {
   extend: 'Ext.form.FieldContainer',
     alias: 'widget.nx-valueset',
   requires: [
-    'Ext.data.SequentialIdGenerator',
+    'Ext.data.identifier.Sequential',
     'Ext.data.Store',
     'Ext.util.KeyNav',
     'NX.Icons'
@@ -31,14 +31,27 @@ Ext.define('NX.ext.form.field.ValueSet', {
   },
 
   statics: {
-    idGenerator: Ext.create('Ext.data.SequentialIdGenerator'),
+    identifier: Ext.create('Ext.data.identifier.Sequential'),
     generateId: function () {
-      return 'nx-valueset-valuefield-' + NX.ext.form.field.ValueSet.idGenerator.generate();
+      return 'nx-valueset-valuefield-' + NX.ext.form.field.ValueSet.identifier.generate();
     }
   },
 
-  // FIXME: This is not the best way to ensure that forms are limited width
-  width: 600,
+  plugins: {
+    responsive:true
+  },
+  responsiveConfig: {
+    'width <= 1366': {
+      maxWidth: 600
+    },
+    'width <= 1600': {
+      maxWidth: 800
+    },
+    'width > 1600' : {
+      maxWidth: 1000
+    }
+  },
+  width: '100%',
 
   /**
    * @cfg {Number} [minValues=0] Minimum number of selections allowed.
@@ -102,11 +115,6 @@ Ext.define('NX.ext.form.field.ValueSet', {
    * @cfg {String} [glyphAddButton="xf055@FontAwesome"]
    */
   glyphAddButton: 'xf055@FontAwesome' /* fa-plus-circle */,
-
-  /**
-   * @cfg {String} [glyphDeleteButton="xf056@FontAwesome"]
-   */
-  glyphDeleteButton: 'xf056@FontAwesome' /* fa-minus-circle */,
 
   /**
    * @private {Ext.data.Store} Stores managed values
@@ -231,7 +239,8 @@ Ext.define('NX.ext.form.field.ValueSet', {
           me.validate();
         }
       });
-      Ext.create('Ext.util.KeyNav', me.valueField.el, {
+      Ext.create('Ext.util.KeyNav', {
+        target: me.valueField.el,
         enter: me.addValue,
         scope: me
       });

@@ -17,6 +17,8 @@ import javax.inject.Named;
 import org.sonatype.goodies.common.ComponentSupport;
 import org.sonatype.nexus.blobstore.api.BlobStoreConfiguration;
 
+import com.amazonaws.ClientConfiguration;
+import com.amazonaws.PredefinedClientConfigurations;
 import com.amazonaws.SdkClientException;
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.AWSCredentialsProvider;
@@ -39,6 +41,8 @@ import static org.sonatype.nexus.blobstore.s3.internal.S3BlobStore.ENDPOINT_KEY;
 import static org.sonatype.nexus.blobstore.s3.internal.S3BlobStore.REGION_KEY;
 import static org.sonatype.nexus.blobstore.s3.internal.S3BlobStore.SECRET_ACCESS_KEY_KEY;
 import static org.sonatype.nexus.blobstore.s3.internal.S3BlobStore.SESSION_TOKEN_KEY;
+import static org.sonatype.nexus.blobstore.s3.internal.S3BlobStore.SIGNERTYPE_KEY;
+import static org.sonatype.nexus.blobstore.s3.internal.S3BlobStore.FORCE_PATH_STYLE_KEY;
 
 /**
  * Creates configured AmazonS3 clients.
@@ -49,12 +53,16 @@ import static org.sonatype.nexus.blobstore.s3.internal.S3BlobStore.SESSION_TOKEN
 public class AmazonS3Factory
     extends ComponentSupport
 {
+  public static final String DEFAULT = "DEFAULT";
+
   public AmazonS3 create(final BlobStoreConfiguration blobStoreConfiguration) {
     AmazonS3ClientBuilder builder = AmazonS3ClientBuilder.standard();
 
     String accessKeyId = blobStoreConfiguration.attributes(CONFIG_KEY).get(ACCESS_KEY_ID_KEY, String.class);
     String secretAccessKey = blobStoreConfiguration.attributes(CONFIG_KEY).get(SECRET_ACCESS_KEY_KEY, String.class);
     String region = blobStoreConfiguration.attributes(CONFIG_KEY).get(REGION_KEY, String.class);
+    String signerType = blobStoreConfiguration.attributes(CONFIG_KEY).get(SIGNERTYPE_KEY, String.class);
+    String forcePathStyle = blobStoreConfiguration.attributes(CONFIG_KEY).get(FORCE_PATH_STYLE_KEY, String.class);
 
     if (!isNullOrEmpty(accessKeyId) && !isNullOrEmpty(secretAccessKey)) {
       String sessionToken = blobStoreConfiguration.attributes(CONFIG_KEY).get(SESSION_TOKEN_KEY, String.class);
@@ -66,7 +74,7 @@ public class AmazonS3Factory
       builder = builder.withCredentials(credentialsProvider);
     }
 
-    if (!isNullOrEmpty(region)) {
+    if (!isNullOrEmptyOrDefault(region)) {
       String endpoint = blobStoreConfiguration.attributes(CONFIG_KEY).get(ENDPOINT_KEY, String.class);
       if (!isNullOrEmpty(endpoint)) {
         builder = builder.withEndpointConfiguration(new AmazonS3ClientBuilder.EndpointConfiguration(endpoint, region));
@@ -74,6 +82,14 @@ public class AmazonS3Factory
         builder = builder.withRegion(region);
       }
     }
+
+    if (!isNullOrEmptyOrDefault(signerType)) {
+      ClientConfiguration clientConfiguration = PredefinedClientConfigurations.defaultConfig();
+      clientConfiguration.setSignerOverride(signerType);
+      builder = builder.withClientConfiguration(clientConfiguration);
+    }
+
+    builder = builder.withPathStyleAccessEnabled(Boolean.parseBoolean(forcePathStyle));
 
     return builder.build();
   }
@@ -122,5 +138,9 @@ public class AmazonS3Factory
       log.warn("Default AWS region not configured, using {}", region, e);
       return region;
     }
+  }
+
+  private boolean isNullOrEmptyOrDefault(final String value) {
+    return isNullOrEmpty(value) || DEFAULT.equals(value);
   }
 }

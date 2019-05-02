@@ -14,11 +14,13 @@ package org.sonatype.nexus.blobstore.file;
 
 import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -35,6 +37,7 @@ import javax.inject.Inject;
 import javax.inject.Named;
 
 import org.sonatype.nexus.blobstore.BlobIdLocationResolver;
+import org.sonatype.nexus.blobstore.BlobStoreSupport;
 import org.sonatype.nexus.blobstore.BlobSupport;
 import org.sonatype.nexus.blobstore.StreamMetrics;
 import org.sonatype.nexus.blobstore.api.Blob;
@@ -47,7 +50,7 @@ import org.sonatype.nexus.blobstore.api.BlobStoreException;
 import org.sonatype.nexus.blobstore.api.BlobStoreMetrics;
 import org.sonatype.nexus.blobstore.api.BlobStoreUsageChecker;
 import org.sonatype.nexus.blobstore.file.internal.BlobCollisionException;
-import org.sonatype.nexus.blobstore.file.internal.BlobStoreMetricsStore;
+import org.sonatype.nexus.blobstore.file.internal.FileBlobStoreMetricsStore;
 import org.sonatype.nexus.blobstore.file.internal.FileOperations;
 import org.sonatype.nexus.common.app.ApplicationDirectories;
 import org.sonatype.nexus.common.io.DirectoryHelper;
@@ -56,10 +59,10 @@ import org.sonatype.nexus.common.node.NodeAccess;
 import org.sonatype.nexus.common.property.PropertiesFile;
 import org.sonatype.nexus.common.property.SystemPropertiesHelper;
 import org.sonatype.nexus.common.stateguard.Guarded;
-import org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport;
 import org.sonatype.nexus.logging.task.ProgressLogIntervalHelper;
 import org.sonatype.nexus.scheduling.TaskInterruptedException;
 
+import com.codahale.metrics.annotation.Timed;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.LoadingCache;
@@ -73,13 +76,12 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.cache.CacheLoader.from;
 import static java.nio.file.FileVisitOption.FOLLOW_LINKS;
-import static java.nio.file.Files.exists;
+import static java.util.Arrays.stream;
 import static java.util.Optional.ofNullable;
 import static org.apache.commons.lang3.StringUtils.EMPTY;
 import static org.apache.commons.lang3.StringUtils.removeEnd;
 import static org.sonatype.nexus.blobstore.DefaultBlobIdLocationResolver.TEMPORARY_BLOB_ID_PREFIX;
 import static org.sonatype.nexus.blobstore.DirectPathLocationStrategy.DIRECT_PATH_ROOT;
-import static org.sonatype.nexus.blobstore.api.BlobAttributesConstants.HEADER_PREFIX;
 import static org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport.State.FAILED;
 import static org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport.State.NEW;
 import static org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport.State.STARTED;
@@ -93,16 +95,13 @@ import static org.sonatype.nexus.scheduling.CancelableHelper.checkCancellation;
  */
 @Named(FileBlobStore.TYPE)
 public class FileBlobStore
-    extends StateGuardLifecycleSupport
-    implements BlobStore
+    extends BlobStoreSupport<FileAttributesLocation>
 {
   public static final String BASEDIR = "blobs";
 
   public static final String TYPE = "File";
 
   public static final String BLOB_CONTENT_SUFFIX = ".bytes";
-
-  public static final String BLOB_ATTRIBUTE_SUFFIX = ".properties";
 
   @VisibleForTesting
   public static final String CONFIG_KEY = "file";
@@ -133,15 +132,13 @@ public class FileBlobStore
 
   private Path contentDir;
 
-  private final BlobIdLocationResolver blobIdLocationResolver;
-
   private final FileOperations fileOperations;
 
-  private BlobStoreConfiguration blobStoreConfiguration;
+  private final ApplicationDirectories applicationDirectories;
 
-  private final Path basedir;
+  private Path basedir;
 
-  private BlobStoreMetricsStore storeMetrics;
+  private FileBlobStoreMetricsStore metricsStore;
 
   private LoadingCache<BlobId, FileBlob> liveBlobs;
 
@@ -153,22 +150,19 @@ public class FileBlobStore
 
   private boolean supportsAtomicMove;
 
-  private final DryRunPrefix dryRunPrefix;
-
   @Inject
   public FileBlobStore(final BlobIdLocationResolver blobIdLocationResolver,
                        final FileOperations fileOperations,
-                       final ApplicationDirectories directories,
-                       final BlobStoreMetricsStore storeMetrics,
+                       final ApplicationDirectories applicationDirectories,
+                       final FileBlobStoreMetricsStore metricsStore,
                        final NodeAccess nodeAccess,
                        final DryRunPrefix dryRunPrefix)
   {
-    this.blobIdLocationResolver = checkNotNull(blobIdLocationResolver);
+    super(blobIdLocationResolver, dryRunPrefix);
     this.fileOperations = checkNotNull(fileOperations);
-    this.basedir = directories.getWorkDirectory(BASEDIR).toPath();
-    this.storeMetrics = checkNotNull(storeMetrics);
+    this.applicationDirectories = checkNotNull(applicationDirectories);
+    this.metricsStore = checkNotNull(metricsStore);
     this.nodeAccess = checkNotNull(nodeAccess);
-    this.dryRunPrefix = checkNotNull(dryRunPrefix);
     this.supportsHardLinkCopy = true;
     this.supportsAtomicMove = true;
   }
@@ -177,13 +171,13 @@ public class FileBlobStore
   public FileBlobStore(final Path contentDir, //NOSONAR
                        final BlobIdLocationResolver blobIdLocationResolver,
                        final FileOperations fileOperations,
-                       final BlobStoreMetricsStore storeMetrics,
+                       final FileBlobStoreMetricsStore metricsStore,
                        final BlobStoreConfiguration configuration,
                        final ApplicationDirectories directories,
                        final NodeAccess nodeAccess,
                        final DryRunPrefix dryRunPrefix)
   {
-    this(blobIdLocationResolver, fileOperations, directories, storeMetrics, nodeAccess, dryRunPrefix);
+    this(blobIdLocationResolver, fileOperations, directories, metricsStore, nodeAccess, dryRunPrefix);
     this.contentDir = checkNotNull(contentDir);
     this.blobStoreConfiguration = checkNotNull(configuration);
   }
@@ -218,15 +212,16 @@ public class FileBlobStore
       metadata.setProperty(REBUILD_DELETED_BLOB_INDEX_KEY, "true");
       metadata.store();
     }
-    storeMetrics.setStorageDir(storageDir);
-    storeMetrics.start();
+    metricsStore.setStorageDir(storageDir);
+    metricsStore.setBlobStore(this);
+    metricsStore.start();
   }
 
   private void maybeUpgradeLegacyIndexFile(final Path deletedIndexPath) throws IOException {
     //While Path#getParent can return null we don't expect that from a configured blob store directory.
     Path legacyDeletionsIndex = deletedIndexPath.getParent().resolve(DELETIONS_FILENAME); //NOSONAR
 
-    if (!exists(deletedIndexPath) && exists(legacyDeletionsIndex)) {
+    if (!Files.exists(deletedIndexPath) && Files.exists(legacyDeletionsIndex)) {
       log.info("Found 'deletions.index' file in blob store {}, renaming to {}", getAbsoluteBlobDir(),
           deletedIndexPath);
       Files.move(legacyDeletionsIndex, deletedIndexPath);
@@ -245,7 +240,7 @@ public class FileBlobStore
     }
     finally {
       deletedBlobIndex = null;
-      storeMetrics.stop();
+      metricsStore.stop();
     }
   }
 
@@ -265,6 +260,10 @@ public class FileBlobStore
     return contentDir.resolve(blobIdLocationResolver.getLocation(id) + BLOB_ATTRIBUTE_SUFFIX);
   }
 
+  protected String attributePathString(final BlobId blobId) {
+    return attributePath(blobId).toString();
+  }
+
   /**
    * Returns a path for a temporary blob-id content file relative to root directory.
    */
@@ -280,11 +279,9 @@ public class FileBlobStore
   }
 
   @Override
-  @Guarded(by = STARTED)
-  public Blob create(final InputStream blobData, final Map<String, String> headers) {
-    checkNotNull(blobData);
-
-    return create(headers, destination -> fileOperations.create(destination, blobData));
+  protected Blob doCreate(final InputStream blobData, final Map<String, String> headers, @Nullable final BlobId blobId)
+  {
+    return create(headers, destination -> fileOperations.create(destination, blobData), blobId);
   }
 
   @Override
@@ -292,37 +289,31 @@ public class FileBlobStore
   public Blob create(final Path sourceFile, final Map<String, String> headers, final long size, final HashCode sha1) {
     checkNotNull(sourceFile);
     checkNotNull(sha1);
-    checkArgument(exists(sourceFile));
+    checkArgument(Files.exists(sourceFile));
 
     return create(headers, destination -> {
       fileOperations.hardLink(sourceFile, destination);
       return new StreamMetrics(size, sha1.toString());
-    });
+    }, null);
   }
 
-  private Blob create(final Map<String, String> headers, final BlobIngester ingester) {
-    checkNotNull(headers);
-
-    checkArgument(headers.containsKey(BLOB_NAME_HEADER), "Missing header: %s", BLOB_NAME_HEADER);
-    checkArgument(headers.containsKey(CREATED_BY_HEADER), "Missing header: %s", CREATED_BY_HEADER);
-
+  private Blob create(final Map<String, String> headers, final BlobIngester ingester, final BlobId blobId) {
     for (int retries = 0; retries <= MAX_COLLISION_RETRIES; retries++) {
       try {
-        return tryCreate(headers, ingester);
+        return tryCreate(headers, ingester, blobId);
       }
       catch (BlobCollisionException e) { // NOSONAR
         log.warn("BlobId collision: {} already exists{}", e.getBlobId(),
             retries < MAX_COLLISION_RETRIES ? ", retrying with new BlobId" : "!");
       }
     }
-
     throw new BlobStoreException("Cannot find free BlobId", null);
   }
 
-  private Blob tryCreate(final Map<String, String> headers, final BlobIngester ingester) {
-    final BlobId blobId = blobIdLocationResolver.fromHeaders(headers);
+  private Blob tryCreate(final Map<String, String> headers, final BlobIngester ingester, final BlobId reusedBlobId) { // NOSONAR
+    final BlobId blobId = getBlobId(headers, reusedBlobId);
     final boolean isDirectPath = Boolean.parseBoolean(headers.getOrDefault(DIRECT_PATH_BLOB_HEADER, "false"));
-    final Long existingSize = isDirectPath ? getContentSizeForDeletion(blobId) : null;
+    final Long existingSize = isDirectPath && exists(blobId) ? getContentSizeForDeletion(blobId) : null;
 
     final Path blobPath = contentPath(blobId);
     final Path attributePath = attributePath(blobId);
@@ -337,7 +328,7 @@ public class FileBlobStore
     try {
       final boolean wouldCollide = fileOperations.exists(blobPath);
 
-      if (RETRY_ON_COLLISION && wouldCollide && !isDirectPath) {
+      if ((reusedBlobId == null) && RETRY_ON_COLLISION && wouldCollide && !isDirectPath) {
         throw new BlobCollisionException(blobId);
       }
       try {
@@ -356,23 +347,23 @@ public class FileBlobStore
         if (existingSize != null) {
           overwrite(temporaryBlobPath, blobPath);
           overwrite(temporaryAttributePath, attributePath);
-          storeMetrics.recordDeletion(existingSize);
+          metricsStore.recordDeletion(existingSize);
         }
         else {
           move(temporaryBlobPath, blobPath);
           move(temporaryAttributePath, attributePath);
         }
 
-        storeMetrics.recordAddition(blobAttributes.getMetrics().getContentSize());
+        metricsStore.recordAddition(blobAttributes.getMetrics().getContentSize());
 
         return blob;
       }
       catch (Exception e) {
         // Something went wrong, clean up the files we created
-        deleteQuietly(temporaryAttributePath);
-        deleteQuietly(temporaryBlobPath);
-        deleteQuietly(attributePath);
-        deleteQuietly(blobPath);
+        fileOperations.deleteQuietly(temporaryAttributePath);
+        fileOperations.deleteQuietly(temporaryBlobPath);
+        fileOperations.deleteQuietly(attributePath);
+        fileOperations.deleteQuietly(blobPath);
         throw new BlobStoreException(e, blobId);
       }
     }
@@ -383,6 +374,7 @@ public class FileBlobStore
 
   @Override
   @Guarded(by = STARTED)
+  @Timed
   public Blob copy(final BlobId blobId, final Map<String, String> headers) {
     Blob sourceBlob = checkNotNull(get(blobId));
     Path sourcePath = contentPath(sourceBlob.getId());
@@ -392,7 +384,7 @@ public class FileBlobStore
           fileOperations.hardLink(sourcePath, destination);
           BlobMetrics metrics = sourceBlob.getMetrics();
           return new StreamMetrics(metrics.getContentSize(), metrics.getSha1Hash());
-        });
+        }, null);
       }
       catch (BlobStoreException e) {
         supportsHardLinkCopy = false;
@@ -406,7 +398,7 @@ public class FileBlobStore
       fileOperations.copy(sourcePath, destination);
       BlobMetrics metrics = sourceBlob.getMetrics();
       return new StreamMetrics(metrics.getContentSize(), metrics.getSha1Hash());
-    });
+    }, null);
   }
 
   @Nullable
@@ -419,6 +411,7 @@ public class FileBlobStore
   @Nullable
   @Override
   @Guarded(by = STARTED)
+  @Timed
   public Blob get(final BlobId blobId, final boolean includeDeleted) {
     checkNotNull(blobId);
 
@@ -434,7 +427,7 @@ public class FileBlobStore
           }
 
           if (blobAttributes.isDeleted() && !includeDeleted) {
-            log.warn("Attempt to access soft-deleted blob {} ({}), reason: {}", blobId, blobAttributes.getPath(), blobAttributes.getDeletedReason());
+            log.warn("Attempt to access soft-deleted blob {} attributes: {}", blobId, blobAttributes);
             return null;
           }
 
@@ -455,10 +448,7 @@ public class FileBlobStore
   }
 
   @Override
-  @Guarded(by = STARTED)
-  public boolean delete(final BlobId blobId, final String reason) {
-    checkNotNull(blobId);
-
+  protected boolean doDelete(final BlobId blobId, final String reason) {
     final FileBlob blob = liveBlobs.getUnchecked(blobId);
 
     Lock lock = blob.lock();
@@ -497,10 +487,9 @@ public class FileBlobStore
   }
 
   @Override
-  @Guarded(by = STARTED)
-  public boolean deleteHard(final BlobId blobId) {
-    checkNotNull(blobId);
-
+  protected boolean doDeleteHard(final BlobId blobId) {
+    final FileBlob blob = liveBlobs.getUnchecked(blobId);
+    Lock lock = blob.lock();
     try {
       log.debug("Hard deleting blob {}", blobId);
 
@@ -513,7 +502,7 @@ public class FileBlobStore
       delete(attributePath);
 
       if (blobDeleted && contentSize != null) {
-        storeMetrics.recordDeletion(contentSize);
+        metricsStore.recordDeletion(contentSize);
       }
 
       return blobDeleted;
@@ -522,6 +511,7 @@ public class FileBlobStore
       throw new BlobStoreException(e, blobId);
     }
     finally {
+      lock.unlock();
       liveBlobs.invalidate(blobId);
     }
   }
@@ -538,18 +528,11 @@ public class FileBlobStore
   @Override
   @Guarded(by = STARTED)
   public BlobStoreMetrics getMetrics() {
-    return storeMetrics.getMetrics();
+    return metricsStore.getMetrics();
   }
 
   @Override
-  @Guarded(by = STARTED)
-  public synchronized void compact() {
-    compact(null);
-  }
-
-  @Override
-  @Guarded(by = STARTED)
-  public synchronized void compact(@Nullable final BlobStoreUsageChecker inUseChecker) {
+  protected void doCompact(@Nullable final BlobStoreUsageChecker inUseChecker) {
     try {
       maybeRebuildDeletedBlobIndex();
 
@@ -589,57 +572,41 @@ public class FileBlobStore
       throws IOException
   {
     Optional<FileBlobAttributes> attributesOption = ofNullable((FileBlobAttributes) getBlobAttributes(blobId));
-    if (!attributesOption.isPresent() || !maybeUndeleteBlob(inUseChecker, blobId, attributesOption.get(), false)) {
+    if (!attributesOption.isPresent() || !undelete(inUseChecker, blobId, attributesOption.get(), false)) {
       // attributes file is missing or blob id not in use, so it's safe to delete the file
       log.debug("Hard deleting blob id: {}, in blob store: {}", blobId, blobStoreConfiguration.getName());
       deleteHard(blobId);
     }
   }
 
-  public boolean maybeUndeleteBlob(@Nullable final BlobStoreUsageChecker inUseChecker,
-                                   final BlobId blobId,
-                                   final FileBlobAttributes attributes,
-                                   final boolean isDryRun)
-  {
-    checkNotNull(attributes);
-    String logPrefix = isDryRun ? dryRunPrefix.get() : "";
-    Optional<String> blobName = Optional.of(attributes)
-        .map(FileBlobAttributes::getProperties)
-        .map(p -> p.getProperty(HEADER_PREFIX + BLOB_NAME_HEADER));
-    if (!blobName.isPresent()) {
-      log.error("Property not present: {}, for blob id: {}, at path: {}", HEADER_PREFIX + BLOB_NAME_HEADER,
-          blobId, attributes.getPath());
+  @Override
+  public boolean isStorageAvailable() {
+    try {
+      FileStore fileStore = Files.getFileStore(contentDir);
+      long usableSpace = fileStore.getUsableSpace();
+      boolean readOnly = fileStore.isReadOnly();
+      boolean result = !readOnly && usableSpace > 0;
+      if (!result) {
+        log.warn("File blob store '{}' is not writable. Read only: {}. Usable space: {}",
+            getBlobStoreConfiguration().getName(), readOnly, usableSpace);
+      }
+      return result;
+    }
+    catch (IOException e) {
+      log.warn("File blob store '{}' is not writable.", getBlobStoreConfiguration().getName(), e);
       return false;
     }
-    if (attributes.isDeleted() && inUseChecker != null && inUseChecker.test(this, blobId, blobName.get())) {
-      String deletedReason = attributes.getDeletedReason();
-      if (!isDryRun) {
-        attributes.setDeleted(false);
-        attributes.setDeletedReason(null);
-        try {
-          attributes.store();
-        }
-        catch (IOException e) {
-          log.error("Error while un-deleting blob id: {}, deleted reason: {}, blob store: {}, blob name: {}",
-              blobId, deletedReason, blobStoreConfiguration.getName(), blobName.get(), e);
-        }
-      }
-      log.warn(
-          "{}Soft-deleted blob still in use, un-deleting blob id: {}, deleted reason: {}, blob store: {}, blob name: {}",
-          logPrefix, blobId, deletedReason, blobStoreConfiguration.getName(), blobName.get());
-      return true;
+  }
+
+  @Override
+  protected void doInit(final BlobStoreConfiguration configuration) {
+    try {
+      this.basedir = applicationDirectories.getWorkDirectory(BASEDIR).toPath();
     }
-    return false;
-  }
+    catch (Exception e) {
+      log.error("Unable to access file blob store base directory: " + BASEDIR, e);
+    }
 
-  @Override
-  public BlobStoreConfiguration getBlobStoreConfiguration() {
-    return this.blobStoreConfiguration;
-  }
-
-  @Override
-  public void init(final BlobStoreConfiguration configuration) {
-    this.blobStoreConfiguration = configuration;
     try {
       Path blobDir = getAbsoluteBlobDir();
       Path content = blobDir.resolve("content");
@@ -662,24 +629,29 @@ public class FileBlobStore
     }
   }
 
+  /**
+   * This is a simple existence check resulting from NEXUS-16729.  This allows clients
+   * to perform a simple check and is primarily intended for use in directpath scenarios.
+   */
+  @Override
+  public boolean exists(final BlobId blobId) {
+    checkNotNull(blobId);
+    if (!fileOperations.exists(attributePath(blobId))) {
+      log.debug("Blob {} was not found during existence check", blobId);
+      return false;
+    }
+    return true;
+  }
+
   private boolean delete(final Path path) throws IOException {
     boolean deleted = fileOperations.delete(path);
     if (deleted) {
       log.debug("Deleted {}", path);
     }
     else {
-      log.error("No file to delete found at {}", path);
+      log.error("No file to delete found at {}", path, new FileNotFoundException(path.toString()));
     }
     return deleted;
-  }
-
-  private void deleteQuietly(final Path path) {
-    try {
-      fileOperations.delete(path);
-    }
-    catch (IOException e) {
-      log.warn("Blob store unable to delete {}", path, e);
-    }
   }
 
   private void move(final Path source, final Path target) throws IOException {
@@ -731,10 +703,17 @@ public class FileBlobStore
     try {
       Path blobDir = getAbsoluteBlobDir();
       if (fileOperations.deleteEmptyDirectory(contentDir)) {
-        Stream.of(storeMetrics.listBackingFiles()).forEach(metricsFile -> deleteQuietly(metricsFile.toPath()));
-        deleteQuietly(blobDir.resolve("metadata.properties"));
-        Stream.of(blobDir.toFile().listFiles((dir, name) -> name.endsWith(DELETIONS_FILENAME)))
-            .forEach(deletionIndex -> deleteQuietly(deletionIndex.toPath()));
+        metricsStore.remove();
+        fileOperations.deleteQuietly(blobDir.resolve("metadata.properties"));
+        File[] files = blobDir.toFile().listFiles((dir, name) -> name.endsWith(DELETIONS_FILENAME));
+        if (files != null) {
+          stream(files)
+              .map(File::toPath)
+              .forEach(fileOperations::deleteQuietly);
+        }
+        else {
+          log.warn("Unable to cleanup file(s) for Deletions Index");
+        }
         if (!fileOperations.deleteEmptyDirectory(blobDir)) {
           log.warn("Unable to delete non-empty blob store directory {}", blobDir);
         }
@@ -769,7 +748,7 @@ public class FileBlobStore
   @VisibleForTesting
   Path getRelativeBlobDir() throws IOException {
     Path configurationPath = getConfiguredBlobStorePath();
-    if (configurationPath.isAbsolute()) {
+    if (configurationPath.isAbsolute() && basedir != null) {
       Path normalizedBase = basedir.toRealPath().normalize();
       Path normalizedPath = configurationPath.toRealPath().normalize();
       if (normalizedPath.startsWith(normalizedBase)) {
@@ -804,7 +783,7 @@ public class FileBlobStore
           .mapToInt(attributes -> {
             try {
               if (attributes.isDeleted()) {
-                String blobId = getBlobIdFromAttributeFilePath(attributes.getPath());
+                String blobId = getBlobIdFromAttributeFilePath(new FileAttributesLocation(attributes.getPath()));
                 deletedBlobIndex.add(blobId.getBytes(StandardCharsets.UTF_8));
                 return 1;
               }
@@ -830,11 +809,6 @@ public class FileBlobStore
     else {
       log.info("Deletions index file rebuild not required");
     }
-  }
-
-  private String getBlobIdFromAttributeFilePath(final Path attributeFilePath) {
-    String filename = attributeFilePath.toFile().getName();
-    return filename.substring(0, filename.length() - BLOB_ATTRIBUTE_SUFFIX.length());
   }
 
   private Stream<Path> getAttributeFilePaths() throws IOException {
@@ -913,6 +887,7 @@ public class FileBlobStore
   public Stream<BlobId> getBlobIdStream() {
     try {
       return getAttributeFilePaths()
+          .map(FileAttributesLocation::new)
           .map(this::getBlobIdFromAttributeFilePath)
           .map(BlobId::new);
     }
@@ -982,6 +957,13 @@ public class FileBlobStore
             blobId, blobPath, e.getMessage(), log.isDebugEnabled() ? e : null);
       return null;
     }
+  }
+
+  @Override
+  public BlobAttributes getBlobAttributes(final FileAttributesLocation attributesFilePath) throws IOException {
+    FileBlobAttributes fileBlobAttributes = new FileBlobAttributes(attributesFilePath.getPath());
+    fileBlobAttributes.load();
+    return fileBlobAttributes;
   }
 
   @Nullable

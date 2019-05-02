@@ -51,7 +51,6 @@ Ext.define('NX.coreui.controller.Privileges', {
     {ref: 'feature', selector: 'nx-coreui-privilege-feature'},
     {ref: 'content', selector: 'nx-feature-content' },
     {ref: 'list', selector: 'nx-coreui-privilege-list'},
-    {ref: 'searchBox', selector: 'nx-coreui-privilege-list nx-searchbox'},
     {ref: 'settings', selector: 'nx-coreui-privilege-feature nx-coreui-privilege-settings'}
   ],
   icons: {
@@ -124,10 +123,15 @@ Ext.define('NX.coreui.controller.Privileges', {
       store: {
         '#Privilege': {
           load: function() {
+            var focusedElement = window.document.activeElement;
+
             me.reselect(arguments);
-            var searchBox = me.getSearchBox();
-            if (searchBox) {
-              searchBox.focus();
+
+            // Calling reselect() removes the focus from the Filter box.
+            // This prevents the Filter box from losing focus while the
+            // user is typing in it - NEXUS-16975, NEXUS-12693
+            if (focusedElement) {
+              focusedElement.focus();
             }
           }
         }
@@ -178,7 +182,7 @@ Ext.define('NX.coreui.controller.Privileges', {
 
     // Show the first panel in the create wizard, and set the breadcrumb
     me.setItemName(2, NX.I18n.format('Privileges_Create_Title', model.get('name')));
-    me.loadCreateWizard(2, true, panel = Ext.create('widget.nx-coreui-privilege-add'));
+    me.loadCreateWizard(2, panel = Ext.create('widget.nx-coreui-privilege-add'));
     var m = me.getPrivilegeModel().create({ type: model.getId(), readonly: false });
     panel.down('nx-settingsform').loadRecord(m);
   },
@@ -195,9 +199,12 @@ Ext.define('NX.coreui.controller.Privileges', {
             NX.Conditions.storeHasRecords('PrivilegeType')
         ),
         {
-          satisfied: button.enable,
-          unsatisfied: button.disable,
-          scope: button
+          satisfied: function () {
+            button.enable();
+          },
+          unsatisfied: function () {
+            button.disable();
+          }
         }
     );
   },
@@ -212,16 +219,39 @@ Ext.define('NX.coreui.controller.Privileges', {
     button.mon(
         NX.Conditions.and(
             NX.Conditions.isPermitted(me.permission + ':delete'),
-            NX.Conditions.gridHasSelection(me.masters[0], function (model) {
-              return !model.get('readOnly');
-            })
+            NX.Conditions.watchEvents([
+              { observable: me.getStore('Privilege'), events: ['load']},
+              { observable: Ext.History, events: ['change']}
+            ], me.watchEventsHandler())
         ),
         {
-          satisfied: button.enable,
-          unsatisfied: button.disable,
-          scope: button
+          satisfied: function () {
+            button.enable();
+          },
+          unsatisfied: function () {
+            button.disable();
+          }
         }
     );
+  },
+
+  /**
+   * @private
+   */
+  watchEventsHandler: function () {
+    var me = this,
+        store = me.getStore('Privilege');
+
+    return function() {
+      var privilegeId = me.getModelIdFromBookmark(),
+          model = privilegeId ? store.findRecord('id', privilegeId, 0, false, true, true) : undefined;
+
+      if (model) {
+        return !model.get('readOnly');
+      }
+
+      return false;
+    };
   },
 
   /**
@@ -306,7 +336,7 @@ Ext.define('NX.coreui.controller.Privileges', {
 
     // Show the first panel in the create wizard, and set the breadcrumb
     me.setItemName(1, NX.I18n.get('Privileges_Select_Title'));
-    me.loadCreateWizard(1, true, Ext.widget({
+    me.loadCreateWizard(1, Ext.widget({
       xtype: 'panel',
       layout: {
         type: 'vbox',
@@ -325,7 +355,7 @@ Ext.define('NX.coreui.controller.Privileges', {
   loadPrivilegeStores: function() {
     var me = this;
 
-    Ext.each(this.stores, function(store){
+    Ext.each(this.storesForLoad, function(store){
       me.getStore(store).clearFilter(true);
     });
     me.loadStores();

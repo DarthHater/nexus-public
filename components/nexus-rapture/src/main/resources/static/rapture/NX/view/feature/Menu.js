@@ -21,13 +21,16 @@ Ext.define('NX.view.feature.Menu', {
   extend: 'Ext.tree.Panel',
   alias: 'widget.nx-feature-menu',
 
-  width: 220,
+  width: 242,
   ui: 'nx-feature-menu',
 
   stateful: true,
-  stateId: 'nx-feature-menu',
+  stateId: 'nx-feature-menu-v2',
 
   store: 'FeatureMenu',
   rootVisible: false,
-  lines: false
+  sortableColumns: false,
+  lines: false,
+
+  ariaRole: 'navigation'
 });

@@ -111,7 +111,8 @@ Ext.define('NX.coreui.controller.Roles', {
           click: me.showAddWindowMapping
         },
         'nx-coreui-role-settings-form': {
-          submitted: me.onSettingsSubmitted
+          submitted: me.onSettingsSubmitted,
+          beforerecordloaded: me.onBeforeRecordLoaded
         }
       }
     });
@@ -138,7 +139,7 @@ Ext.define('NX.coreui.controller.Roles', {
 
     // Show the first panel in the create wizard, and set the breadcrumb
     me.setItemName(1, NX.I18n.get('Roles_Create_Title'));
-    me.loadCreateWizard(1, true, Ext.create('widget.nx-coreui-role-add'));
+    me.loadCreateWizard(1, Ext.create('widget.nx-coreui-role-add'));
   },
 
   /**
@@ -155,7 +156,7 @@ Ext.define('NX.coreui.controller.Roles', {
 
     // Show the first panel in the create wizard, and set the breadcrumb
     me.setItemName(1, NX.I18n.get('Roles_Create_Title'));
-    me.loadCreateWizard(1, true, Ext.create('widget.nx-coreui-role-add', { source: menuItem.source }));
+    me.loadCreateWizard(1, Ext.create('widget.nx-coreui-role-add', { source: menuItem.source }));
   },
 
   /**
@@ -191,21 +192,45 @@ Ext.define('NX.coreui.controller.Roles', {
    * @protected
    * Enable 'Delete' when user has 'delete' permission and role is not read only.
    */
-  bindDeleteButton: function(button) {
+  bindDeleteButton: function (button) {
     var me = this;
+
     button.mon(
         NX.Conditions.and(
             NX.Conditions.isPermitted(me.permission + ':delete'),
-            NX.Conditions.gridHasSelection(me.masters[0], function(model) {
-              return !model.get('readOnly');
-            })
+            NX.Conditions.watchEvents([
+              { observable: me.getStore('Role'), events: ['load']},
+              { observable: Ext.History, events: ['change']}
+            ], me.watchEventsHandler())
         ),
         {
-          satisfied: button.enable,
-          unsatisfied: button.disable,
-          scope: button
+          satisfied: function () {
+            button.enable();
+          },
+          unsatisfied: function () {
+            button.disable();
+          }
         }
     );
+  },
+
+  /**
+   * @private
+   */
+  watchEventsHandler: function () {
+    var me = this,
+        store = me.getStore('Role');
+
+    return function() {
+      var roleId = me.getModelIdFromBookmark(),
+          model = roleId ? store.findRecord('id', roleId, 0, false, true, true) : undefined;
+
+      if (model) {
+        return !model.get('readOnly');
+      }
+
+      return false;
+    };
   },
 
   /**
@@ -232,6 +257,15 @@ Ext.define('NX.coreui.controller.Roles', {
           text: NX.I18n.format('Roles_Delete_Message', description), type: 'success'
         });
       }
+    });
+  },
+
+  onBeforeRecordLoaded: function(roleSettingsForm, editingRole) {
+    var roleStore = roleSettingsForm.down('#roles').getStore();
+    roleStore.load();
+    roleStore.clearFilter(true);
+    roleStore.filterBy(function(role) {
+      return role.get('id') !== editingRole.get('id');
     });
   }
 

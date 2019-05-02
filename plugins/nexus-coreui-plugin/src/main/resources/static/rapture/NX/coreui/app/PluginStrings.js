@@ -36,18 +36,6 @@ Ext.define('NX.coreui.app.PluginStrings', {
    */
   keys: {
     // Browse -> Browse
-    Browse_Assets_Title_Feature: 'Assets',
-    Browse_Assets_Description_Feature: 'Browse assets',
-    Browse_Components_Title_Feature: 'Components',
-    Browse_Components_Description_Feature: 'Browse components and assets',
-    Browse_BrowseComponentList_Name_Column: 'Name',
-    Browse_BrowseComponentList_Group_Column: 'Group',
-    Browse_BrowseComponentList_Version_Column: 'Version',
-    Browse_BrowseComponentList_EmptyText_View: 'No components found in repository',
-    Browse_BrowseComponentList_EmptyText_Filter: 'No components matched "$filter"',
-    Browse_BrowseAssetList_Name_Column: 'Name',
-    Browse_BrowseAssetList_EmptyText_View: 'No assets found in repository',
-    Browse_BrowseAssetList_EmptyText_Filter: 'No assets matched "$filter"',
     Assets_Info_Repository: 'Repository',
     Assets_Info_Format: 'Format',
     Assets_Info_Group: 'Component Group',
@@ -57,6 +45,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Assets_Info_ContentType: 'Content type',
     Assets_Info_FileSize: 'File size',
     Assets_Info_Last_Downloaded: 'Last downloaded',
+    Assets_Info_No_Downloads: 'has not been downloaded',
     Assets_Info_Locally_Cached: 'Locally cached',
     Assets_Info_BlobRef: 'Blob reference',
     Assets_Info_Blob_Created: 'Blob created',
@@ -69,6 +58,10 @@ Ext.define('NX.coreui.app.PluginStrings', {
     AssetInfo_Delete_Button: 'Delete asset',
     AssetInfo_Delete_Title: 'Confirm deletion?',
     AssetInfo_Delete_Success: 'Asset deleted: {0}',
+    FolderInfo_Delete_Button: 'Delete folder',
+    FolderInfo_Delete_Title: 'Delete the entire folder?',
+    FolderInfo_Delete_Text: 'All assets you have permission to delete under folder \'{0}\' will be removed. The view will not automatically refresh to show progress. This operation cannot be undone.',
+    FolderInfo_Delete_Success: 'The folder is now being deleted in the background',
     Component_Asset_Tree_Title_Feature: 'Tree',
     Component_Asset_Tree_Description_Feature: 'View tree layout of components and assets',
     Component_Asset_Tree_EmptyText_View: 'No component/assets found in repository',
@@ -80,11 +73,19 @@ Ext.define('NX.coreui.app.PluginStrings', {
 
     ComponentDetails_Delete_Button: 'Delete component',
     ComponentDetails_Analyze_Button: 'Analyze application',
+    ComponentDetails_Browse_Snapshots_Button: 'Browse SNAPSHOT(s)',
     ComponentDetails_Delete_Body: 'This will delete all asset(s) associated with the component: {0}',
     ComponentDetails_Delete_Title: 'Confirm deletion?',
     ComponentDetails_Delete_Success: 'Component deleted: {0}',
     ComponentDetails_Analyze_Success: 'Analysis in process. Email will be sent when report is ready.',
     ComponentDetails_Loading_Mask: 'Loading...',
+    ComponentDetails_Rebuild_Warning: 'Browse tree is being rebuilt; results may not be complete until the rebuild is finished.',
+
+    ComponentUtils_Delete_Button_Unauthenticated: 'Please sign in first',
+    ComponentUtils_Delete_Asset_No_Permissions: 'You do not have permission to delete this asset',
+    ComponentUtils_Delete_Component_No_Permissions: 'You do not have permission to delete this component',
+
+    AnalyzeApplication_Button_Unauthenticated: 'Please sign in first',
 
     AnalyzeApplicationWindow_Title: 'Analyze Application',
     AnalyzeApplicationWindow_Form_Asset_FieldLabel: 'Application asset',
@@ -105,7 +106,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     '<a href="http://links.sonatype.com/products/insight/ac/home" target="_blank" class="x-link">here</a>.</p>',
     AnalyzeApplicationWindow_Loading_Mask: 'Loading',
     AnalyzeApplicationWindow_No_Assets_Error_Title: 'Component has no application assets',
-    AnalyzeApplicationWindow_No_Assets_Error_Message: 'The component you are analyzing has no application assets, please select another component for analysis.',
+    AnalyzeApplicationWindow_No_Assets_Error_Message: 'This component has no application assets or you do not have read permission for any of it\'s application assets',
 
     HealthCheckInfo_Most_Popular_Version_Label: 'Most popular version',
     HealthCheckInfo_Age_Label: 'Age',
@@ -126,6 +127,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     SearchCriteria_Keyword_FieldLabel: 'Keyword',
     SearchCriteria_RepositoryName_FieldLabel: 'Repository Name',
     SearchCriteria_Name_FieldLabel: 'Name',
+    SearchCriteria_Tag_FieldLabel: 'Tag',
     SearchCriteria_Format_FieldLabel: 'Format',
     SearchCriteria_Group_FieldLabel: 'Group',
     SearchCriteria_Checksum_Group: 'Checksum',
@@ -252,7 +254,6 @@ Ext.define('NX.coreui.app.PluginStrings', {
     FeatureGroups_Upload_Asset_Form_Remove_Button: 'Remove',
     FeatureGroups_Upload_Asset_Form_Add_Asset_Button: 'Add another asset',
     FeatureGroups_Upload_Asset_Form_Not_Unique_Error_Message: 'Asset not unique',
-    FeatureGroups_Upload_Component_Form_Title: 'Component coordinates',
     FeatureGroups_Upload_Form_Upload_Button: 'Upload',
     FeatureGroups_Upload_Form_Discard_Button: 'Cancel',
     FeatureGroups_Upload_Form_Browse_Button: 'Browse',
@@ -294,8 +295,9 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Repository_Facet_DockerHostedFacet_V1_Enabled_Help: 'Allow clients to use the V1 API to interact with this Repository',
     Repository_Facet_DockerConnectorFacet_Title: 'Repository Connectors',
     Repository_Facet_DockerConnectorFacet_Help: '<em>Connectors allow Docker clients to connect directly ' +
-    'to hosted registries, but are not always required. Consult our <a href="http://links.sonatype.com/products/nexus/docker-ssl-connector/docs" target="_blank">documentation</a>' +
-    ' for which connector is appropriate for your use case.<em/>',
+    'to hosted registries, but are not always required. Consult our <a href="https://links.sonatype.com/products/nexus/docker-ssl-connector/docs" target="_blank">documentation</a>' +
+    ' for which connector is appropriate for your use case. For information on scaling the repositories' +
+    ' see our <a href="https://links.sonatype.com/products/nexus/docker-scaling-repositories/docs" target="_blank">scaling documentation</a>.</em>',
     Repository_Facet_DockerConnectorFacet_HttpPort_FieldLabel: 'HTTP',
     Repository_Facet_DockerConnectorFacet_HttpPort_HelpText: 'Create an HTTP connector at specified port. Normally used if the server is behind a secure proxy.',
     Repository_Facet_DockerConnectorFacet_HttpsPort_FieldLabel: 'HTTPS',
@@ -305,8 +307,8 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Repository_Facet_DockerProxyFacet_IndexTypeHub_BoxLabel: 'Use Docker Hub',
     Repository_Facet_DockerProxyFacet_IndexTypeCustom_BoxLabel: 'Custom index',
     Repository_Facet_DockerProxyFacet_IndexUrl_HelpText: 'Location of Docker index',
-    Repository_Facet_DockerProxyFacet_BasicAuth_FieldLabel: 'Force basic authentication',
-    Repository_Facet_DockerProxyFacet_BasicAuth_BoxLabel: 'Disable to allow anonymous pull (Note: also requires Docker Bearer Token Realm to be activated)',
+    Repository_Facet_DockerProxyFacet_BasicAuth_FieldLabel: 'Allow anonymous docker pull',
+    Repository_Facet_DockerProxyFacet_BasicAuth_BoxLabel: 'Allow anonymous docker pull ( Docker Bearer Token Realm required )',
     Repository_Facet_YumHostedFacet_Title: 'Yum',
     Repository_Facet_YumHostedFacet_RepodataDepth_FieldLabel: 'Repodata Depth',
     Repository_Facet_YumHostedFacet_RepodataDepth_HelpText: 'Specifies the repository depth where repodata folder(s) are created',
@@ -323,6 +325,8 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Repository_Facet_ProxyFacet_Title: 'Proxy',
     Repository_Facet_StorageFacet_Title: 'Storage',
     Repository_Facet_StorageFacetHosted_Title: 'Hosted',
+    Repository_Facet_RoutingRuleFacet_Title: 'Routing Rule',
+    Repository_Facet_RoutingRuleFacet_HelpText: 'Choose a rule to restrict some requests from being served by this repository',
     Repository_Facet_ProxyFacet_Autoblock_FieldLabel: 'Auto blocking enabled',
     Repository_Facet_ProxyFacet_Autoblock_HelpText: 'Auto-block outbound connections on the repository if remote peer is detected as unreachable/unresponsive',
     Repository_Facet_ProxyFacet_Blocked_FieldLabel: 'Blocked',
@@ -344,6 +348,14 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Repository_Facet_ProxyFacet_Remote_FieldLabel: 'Remote storage',
     Repository_Facet_ProxyFacet_Remote_HelpText: 'Location of the remote repository being proxied',
     Repository_Facet_ProxyFacet_Remote_EmptyText: 'Enter a URL',
+    Repository_Facet_ProxyFacet_Bower_Remote_HelpText: 'Location of the remote repository being proxied, e.g. https://registry.bower.io',
+    Repository_Facet_ProxyFacet_Docker_Remote_HelpText: 'Location of the remote repository being proxied, e.g. https://registry-1.docker.io',
+    Repository_Facet_ProxyFacet_Maven_Remote_HelpText: 'Location of the remote repository being proxied, e.g. https://repo1.maven.org/maven2/',
+    Repository_Facet_ProxyFacet_Npm_Remote_HelpText: 'Location of the remote repository being proxied, e.g. https://registry.npmjs.org',
+    Repository_Facet_ProxyFacet_Nuget_Remote_HelpText: 'Location of the remote repository being proxied, e.g. https://www.nuget.org/api/v2/',
+    Repository_Facet_ProxyFacet_Pypi_Remote_HelpText: 'Location of the remote repository being proxied, e.g. https://pypi.org',
+    Repository_Facet_ProxyFacet_Rubygems_Remote_HelpText: 'Location of the remote repository being proxied, e.g. https://rubygems.org',
+    Repository_Facet_ProxyFacet_Yum_Remote_HelpText: 'Location of the remote repository being proxied, e.g.  http://mirror.centos.org/centos/',
     Ssl_SslUseTrustStore_BoxLabel: 'Use the Nexus truststore',
     Ssl_SslUseTrustStore_Certificate_Button: 'View certificate',
     Ssl_SslUseTrustStore_Certificate_HelpText: 'Use certificates stored in the Nexus truststore to connect to external systems',
@@ -392,6 +404,11 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Repository_Facet_HttpClientFacet_AuthenticationType_NTLM: 'Windows NTLM',
     Repository_Facet_HttpClientFacet_Authentication_Title: 'Authentication',
     Repository_Facet_HttpClientFacet_HTTP_Title: 'HTTP request settings',
+    Repository_Facet_CleanupPolicyFacet_Title: 'Cleanup Policy',
+    Repository_Facet_CleanupPolicyFacet_Policy_FieldLabel: 'Available cleanup policies',
+    Repository_Facet_CleanupPolicyFacet_Policy_HelpText: 'Select a cleanup policy',
+    Repository_Facet_CleanupPolicyFacet_Policy_EmptyText: 'None',
+    Repository_Formats_All: '(All Formats)',
 
     HealthCheckRepositoryColumn_Header: 'Health check',
     HealthCheckRepositoryColumn_Analyzing: 'Analyzing&hellip;',
@@ -414,8 +431,6 @@ Ext.define('NX.coreui.app.PluginStrings', {
     HealthCheckRepositoryColumn_Analyze_Permission_Error: '<span><h2>Insufficient Permissions to Analyze a Repository</h2>' +
     'To analyze a repository your user account must have permissions to start analysis.</span>',
     HealthCheckRepositoryColumn_Loading: 'Loading&hellip;',
-    HealthCheckRepositoryColumn_CollectingTrendData: 'Insufficient trend data',
-    HealthCheckRepositoryColumn_DownloadsDisabled: 'Download trends disabled',
     HealthCheckRepositoryColumn_Unavailable_Tooltip: '<span><h2>Repository Health Check Unavailable</h2>A Repository Health Check (RHC) ' +
     'cannot be performed on this repository, because it is an unsupported type or out of service.<br><br>' +
     '<a href="http://links.sonatype.com/products/clm/rhc/home" ' +
@@ -427,7 +442,9 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Blobstores_Text: 'Blob Stores',
     Blobstores_Description: 'Manage blob stores',
     Blobstores_Delete_Mask: 'Deleting blob store',
+    Blobstores_Update_Mask: 'Updating blob store',
     Blobstores_Create_Title: 'Create blob store',
+    Blobstores_Update_Success: 'Blob store updated: {0}',
     Blobstore_BlobstoreAdd_Create_Success: 'Blob store created: ',
     Blobstore_BlobstoreAdd_Create_Error: 'You do not have permission to create blob stores',
     Blobstore_BlobstoreSettingsForm_Update_Success: 'Blob store updated: ',
@@ -441,12 +458,21 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Blobstore_BlobstoreList_Filter_EmptyText: 'No blob stores matched "$filter"',
     Blobstore_BlobstoreList_EmptyText: 'No blob stores defined',
     Blobstore_BlobstoreFeature_Delete_Button: 'Delete blob store',
-    Blobstore_BlobstoreFeature_Delete_Disabled_Message: 'This blob store is in use by {0} and cannot be deleted',
+    Blobstore_BlobstoreFeature_Delete_Disabled_Message: 'This blob store is in use by {0} and {1} and cannot be deleted',
+    Blobstore_BlobstoreFeature_Editing_Enabled_Message: 'Updating blob store configuration will cause it to be temporarily unavailable for a short period. Edits to configuration may also leave the blob store in a non-functional state. Use caution when changing values.',
+    Blobstore_BlobstoreFeature_Promote_Button: 'Promote to group',
+    Blobstore_BlobstoreFeature_Promote_Success: 'Blob store: {0} promoted to blob store group',
+    Blobstore_BlobstoreFeature_Update_Title: 'Update Blob Store?',
+    Blobstore_BlobstoreFeature_Update_Warning: 'Warning: The blob store will be temporarily unavailable for a short period.  This function does not migrate data to a new location.',
     Blobstore_BlobstoreSettings_Title: 'Settings',
     Blobstore_BlobstoreAdd_Type_FieldLabel: 'Type',
     Blobstore_BlobstoreAdd_Type_EmptyText: 'Select a type',
     Blobstore_BlobstoreSettingsForm_Name_FieldLabel: 'Name',
     Blobstore_BlobstoreSettingsForm_Path_FieldLabel: 'Path',
+    Blobstore_BlobstoreSettingsForm_EnableSoftQuota_FieldLabel: 'Enable Soft Quota',
+    Blobstore_BlobstoreSettingsForm_SoftQuota_HelpText: 'A soft quota provides warnings when a limit is violated.  It never causes an operation to be rejected',
+    Blobstore_BlobstoreSettingsForm_QuotaType_FieldLabel: 'Type of Quota',
+    Blobstore_BlobstoreSettingsForm_QuotaLimit_FieldLabel: 'Quota Limit in MB',
 
     // Admin -> Repository -> Selectors
     Selectors_Text: 'Content Selectors',
@@ -475,14 +501,14 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Selector_SelectorSettingsForm_Expression_Examples: '<div style="font-size: 11px"><br/>' +
     '<h4>Example Content Selector Expressions:</h4>' +
     '<p>Select all "raw" format content<br/><i>format == "raw"</i></p>' +
-    '<p>Select all "maven2" content with a groupId that starts with "org.sonatype.nexus"<br/><i>format == "maven2" and coordinate.groupId =^ "org.sonatype.nexus"</i></p>' +
+    '<p>Select all "maven2" content along a path that starts with "/org/sonatype/nexus"<br/><i>format == "maven2" and path =^ "/org/sonatype/nexus"</i></p>' +
     '<br/>' +
     '<p>See the <a href="http://links.sonatype.com/products/nexus/selectors/docs" target="_blank">Nexus documentation</a> for more details</p>' +
     '</div>',
     Selector_SelectorSettingsForm_Expression_Examples_jexl: '<div style="font-size: 11px"><br/>' +
     '<h4>Example <a href="http://links.sonatype.com/products/nexus/jexl" target="_blank">JEXL</a> queries:</h4>' +
     '<p>Select all "raw" format content<br/><i>format == "raw"</i></p>' +
-    '<p>Select all "maven2" content with a groupId that starts with "org.sonatype.nexus"<br/><i>format == "maven2" and coordinate.groupId =^ "org.sonatype.nexus"</i></p>' +
+    '<p>Select all "maven2" content along a path that starts with "/org/sonatype/nexus"<br/><i>format == "maven2" and path =^ "/org/sonatype/nexus"</i></p>' +
     '<br/>' +
     '<p>See the <a href="http://links.sonatype.com/products/nexus/selectors/docs" target="_blank">Nexus documentation</a> for more details</p>' +
     '</div>',
@@ -685,7 +711,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     LdapServersConnectionFieldSet_Host_EmptyText: 'Hostname',
     LdapServersConnectionFieldSet_Port_EmptyText: 'Port',
     LdapServersConnectionFieldSet_Base_FieldLabel: 'Search base',
-    LdapServersConnectionFieldSet_Base_HelpText: 'LDAP location to be added to the connection URL (e.g. "dc=sonatype,dc=com")',
+    LdapServersConnectionFieldSet_Base_HelpText: 'LDAP location to be added to the connection URL (e.g. "dc=example,dc=com")',
     LdapServersConnectionFieldSet_AuthMethod_FieldLabel: 'Authentication method',
     LdapServersConnectionFieldSet_AuthMethod_EmptyText: 'Select an authentication method',
     LdapServersConnectionFieldSet_AuthMethod_SimpleItem: 'Simple Authentication',
@@ -714,7 +740,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Ldap_LdapServerUserAndGroupFieldSet_ObjectClass_FieldLabel: 'Object class',
     Ldap_LdapServerUserAndGroupFieldSet_ObjectClass_HelpText: 'LDAP class for user objects (e.g. inetOrgPerson)',
     Ldap_LdapServerUserAndGroupFieldSet_UserFilter_FieldLabel: 'User filter',
-    Ldap_LdapServerUserAndGroupFieldSet_UserFilter_HelpText: 'LDAP search filter to limit user search (e.g. "attribute=foo" or "(l(mail=*@domain.com)(uid=dom*))")',
+    Ldap_LdapServerUserAndGroupFieldSet_UserFilter_HelpText: 'LDAP search filter to limit user search (e.g. "attribute=foo" or "(|(mail=*@example.com)(uid=dom*))")',
     Ldap_LdapServerUserAndGroupFieldSet_UserID_FieldLabel: 'User ID attribute',
     Ldap_LdapServerUserAndGroupFieldSet_RealName_FieldLabel: 'Real name attribute',
     Ldap_LdapServerUserAndGroupFieldSet_Email_FieldLabel: 'Email attribute',
@@ -735,7 +761,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Ldap_LdapServerUserAndGroupFieldSet_GroupMember_FieldLabel: 'Group member attribute',
     Ldap_LdapServerUserAndGroupFieldSet_GroupMember_HelpText: 'LDAP attribute containing the usernames for the group.',
     Ldap_LdapServerUserAndGroupFieldSet_GroupMemberFormat_FieldLabel: 'Group member format',
-    Ldap_LdapServerUserAndGroupFieldSet_GroupMemberFormat_HelpText: 'The format of user ID stored in the group member attribute (e.g. "uid=${username},ou=people,o=sonatype")',
+    Ldap_LdapServerUserAndGroupFieldSet_GroupMemberFormat_HelpText: 'The format of user ID stored in the group member attribute (e.g. "uid=${username},ou=people,dc=example,dc=com")',
     Ldap_LdapServerUserAndGroupFieldSet_GroupMemberOf_FieldLabel: 'Group member of attribute',
     Ldap_LdapServerUserAndGroupFieldSet_GroupMemberOf_HelpText: 'Set this to the attribute used to store the attribute which holds groups DN in the user object',
     Ldap_LdapServerUserAndGroupForm_VerifyGroupMapping_Button: 'Verify user mapping',
@@ -790,44 +816,6 @@ Ext.define('NX.coreui.app.PluginStrings', {
     // Admin -> Support
     FeatureGroups_Support_Text: 'Support',
     FeatureGroups_Support_Description: 'Support tools',
-
-    // Admin -> Support -> Analytics
-    AnalyticsSettings_Text: 'Analytics',
-    AnalyticsSettings_Description: 'Manage analytics configuration',
-    Analytics_EventsZipCreated_FileType: 'Events ZIP',
-    Analytics_AnalyticsSettings_Update_Error: 'You do not have permission to configure analytics',
-    Analytics_AnalyticsSettings_Update_Success: 'Analytics settings $action',
-    Analytics_AnalyticsSettings_HelpText: '<p>The analytics feature collects non-sensitive information about how your organization is using Nexus. It is useful to you from a compatibility perspective, since it gathers answers to questions such as what features are most important, where are users having difficulty and what integrations/APIs are actively in use. This data is available to you and allows you to understand your usage of Nexus better. Provided to Sonatype it enables us to tailor the ongoing development of the product.</p><b>Event Collection</b><p>The collected information is limited to the use of the Nexus user interface and the Nexus REST API -- i.e. the primary interaction points between your environment and Nexus. Only the user interface navigation flows and REST endpoints being called are recorded. None of the request specific data (e.g. credentials or otherwise sensitive information) is ever captured.</p><p>Event collection and submission are controlled separately.  When collection is enabled, a summary of the data collected is shown on the <code>Events</code> tab.</p><b>Event Submission</b><p>Analytics event data can be submitted either automatically or manually.<br/><code>Export</code> generates a ZIP file that can be inspected prior to any information being sent to the Nexus analytics service.<br/><code>Submit</code> generates a ZIP file and then immediately uploads it to the Nexus analytics service.</p>',
-    Analytics_AnalyticsSettings_Collection_BoxLabel: 'Collect analytics events',
-    Analytics_AnalyticsSettings_Submission_BoxLabel: 'Enable anonymized analytics submission to Sonatype',
-
-    // Admin -> Support -> Analytics -> Events
-    AnalyticsEvents_Text: 'Events',
-    AnalyticsEvents_Description: 'View recorded analytics events',
-    Analytics_AnalyticsEventList_Filter_EmptyText: 'No analytics events matched "$filter"',
-    Analytics_AnalyticsEventList_Clear_Button: 'Clear',
-    AnalyticsEvents_Clear_Title: 'Clear Events',
-    AnalyticsEvents_Clear_Body: 'Clear analytics event data?',
-    AnalyticsEvents_Clear_Mask: 'Clearing event data',
-    AnalyticsEvents_Clear_Success: 'Event data has been cleared',
-    Analytics_AnalyticsEventsList_Export_Button: 'Export',
-    AnalyticsEvents_Export_Title: 'Export Events',
-    AnalyticsEvents_Export_Body: '<p>Export and download analytics event data?</p><p>No data will be sent to Sonatype.</p>',
-    AnalyticsEvents_Export_Mask: 'Exporting event data',
-    AnalyticsEvents_Authenticate_Title: 'Downloading analytics events requires validation of your credentials',
-    Analytics_AnalyticsEventList_Submit_Button: 'Submit',
-    AnalyticsEvents_Submit_Title: 'Submit Events',
-    AnalyticsEvents_Submit_Body: '<p>Submit analytics event data to Sonatype?</p><p>All identifying data will be anonymized.</p>',
-    AnalyticsEvents_Submit_HelpText: 'Submitting analytics event data to Sonatype requires validation of your credentials',
-    AnalyticsEvents_Submit_Success: 'Event data submission was successful',
-    Analytics_AnalyticsEventList_Type_Header: 'Event type',
-    Analytics_AnalyticsEventList_Timestamp_Header: 'Timestamp',
-    Analytics_AnalyticsEventList_Timestamp_Tooltip: 'Event timestamp in milliseconds',
-    Analytics_AnalyticsEventList_Sequence_Header: 'Sequence',
-    Analytics_AnalyticsEventList_Duration_Header: 'Duration',
-    Analytics_AnalyticsEventList_Duration_Tooltip: 'Event duration in nanoseconds',
-    Analytics_AnalyticsEventList_User_Header: 'User',
-    Analytics_AnalyticsEventList_Attributes_Header: 'Attributes',
 
     // Admin -> Support -> Logging
     Loggers_Text: 'Logging',
@@ -892,7 +880,6 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Support_Metrics_Dump_Button: 'Thread dump',
     Support_Metrics_Dump_Tooltip: 'Download thread dump',
     Support_Metrics_MemoryUsage_Title: 'Memory usage',
-    Support_Metrics_MemoryDistribution_Title: 'Memory distribution',
     Support_Metrics_Heap_Title: 'Heap',
     Metrics_Heap_NonHeapItem: 'Non-heap',
     Metrics_Heap_Available: 'Available',
@@ -906,7 +893,15 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Support_Metrics_Dispatches_Title: 'Active Web Requests',
     Support_Metrics_ResponseCode_Title: 'Web Response Codes',
     Support_Metrics_Requests_Title: 'Web Requests',
-
+    
+    // Admin -> Support -> MetricHealth
+    Metric_Health_Text: 'Status',
+    Metric_Health_Description: 'System status checks',
+    Metric_Health_Name_Header: 'Name',
+    Metric_Health_Message_Header: 'Message',
+    Metric_Health_Error_Header: 'Error',
+    Metric_Health_Load_Mask: 'Loading&hellip;',
+    Metric_Health_Refresh_Warning : 'Failed to refresh server status',
 
     // Admin -> Support -> Support Request
     SupportRequest_Text: 'Support Request',
@@ -918,7 +913,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     SupportZip_Title: 'Support ZIP',
     SupportZip_Description: 'Creates a ZIP file containing useful support information about your server',
     SupportZip_HelpText: '<p>No information will be sent to Sonatype when creating the support ZIP file.</p>' +
-      '<p>Support ZIP creation may take a few minutes to complete.</p>',
+    '<p>Support ZIP creation may take a few minutes to complete.</p>',
     Support_SupportZip_Contents_FieldLabel: 'Contents',
     Support_SupportZip_Report_BoxLabel: 'System information report',
     Support_SupportZip_Dump_BoxLabel: 'JVM thread-dump',
@@ -926,15 +921,23 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Support_SupportZip_Security_BoxLabel: 'Security configuration files',
     Support_SupportZip_LogFiles_BoxLabel: 'Log files',
     Support_SupportZip_TaskLogFiles_BoxLabel: 'Task log files',
+    Support_SupportZip_AuditLogFiles_BoxLabel: 'Audit log files',
     Support_SupportZip_Metrics_BoxLabel: 'System and component metrics',
     Support_SupportZip_JMX_BoxLabel: 'JMX information',
     Support_SupportZip_Options_FieldLabel: 'Options',
     Support_SupportZip_Included_BoxLabel: 'Limit files in the ZIP archive to 30 MB apiece',
     Support_SupportZip_Max_BoxLabel: 'Limit the ZIP archive to 20 MB',
     Support_SupportZip_Create_Button: 'Create support ZIP',
+    Support_HA_SupportZip_Create_Button: 'Create support ZIP (all nodes)',
+    Support_HA_SupportZip_Failed_Title: 'Support ZIP Error',
+    Support_HA_SupportZip_Failed_Message: 'An error occurred while trying to generate support zips for all nodes',
     Support_SupportZip_Creating_Message: '<div align="center">Creating support ZIP <br/>(may take a few minutes)</div>',
     Support_SupportZipCreated_FileType_Text: 'Support ZIP',
     Support_SupportZipCreated_Truncated_Text: 'Contents have been truncated due to exceeded size limits.',
+    Support_SupportZipCreated_Node_FieldLabel: 'Node ID',
+    Support_SupportZipCreated_Node_Details_FieldLabel: 'Details',
+    Support_SupportZipCreated_Node_Details_HelpText: 'Additional failure information',
+    Support_SupportZipCreated_Node_Failed_Message: 'Unable to generate support ZIP on node',
     Support_SupportZip_Create_Success: 'Support ZIP created',
     Support_FileCreated_Name_FieldLabel: 'Name',
     Support_FileCreated_Size_FieldLabel: 'Size',
@@ -996,6 +999,57 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Capabilities_State_Text: 'State',
     Capability_CapabilitySummary_Notes_HelpText: 'Optional notes about configured capability',
     Capability_CapabilityStatus_EmptyText: 'This capability does not provide any status',
+
+    // Admin -> System -> Cleanup Policies
+    CleanupPolicies_Text: 'Cleanup Policies',
+    CleanupPolicies_Description: 'Manage component removal configuration',
+    CleanupPolicies_Create_Title: 'Create Cleanup Policy',
+    CleanupPolicies_Delete_Title: 'Confirm deletion?',
+    CleanupPolicies_Delete_Description: 'This Cleanup Policy is not used by any repository',
+    CleanupPolicies_Delete_Description_Multiple: 'This Cleanup Policy is used by {0} repositories',
+    CleanupPolicies_Delete_Success: 'Cleanup Policy deleted: {0}',
+    CleanupPolicy_CleanupPolicyList_Preview_Button: 'Preview results',
+    CleanupPolicy_CleanupPolicyList_New_Button: 'Create Cleanup Policy',
+    CleanupPolicy_CleanupPolicyList_Filter_EmptyState: 'No cleanup policies matched "$filter"',
+    CleanupPolicy_CleanupPolicyList_EmptyState: 'No cleanup policies defined',
+    CleanupPolicy_CleanupPolicyList_Name_Header: 'Name',
+    CleanupPolicy_CleanupPolicyList_Format_Header: 'Format',
+    CleanupPolicy_CleanupPolicyList_Notes_Header: 'Notes',
+    CleanupPolicy_CleanupPolicyFeature_Settings_Title: 'Settings',
+    CleanupPolicy_CleanupPolicyFeature_Delete_Button: 'Delete',
+    CleanupPolicy_CleanupPolicySettingsForm_Update_Success: 'Cleanup Policy updated: ',
+    CleanupPolicy_CleanupPolicySettingsForm_Update_Error: 'You do not have permission to update Cleanup Policies',
+    CleanupPolicy_CleanupPolicySettingsForm_CleanupPolicy_Title :'Cleanup Policy',
+    CleanupPolicy_CleanupPolicySettingsForm_Name_FieldLabel: 'Name',
+    CleanupPolicy_CleanupPolicySettingsForm_Name_HelpText: 'A unique name for the cleanup policy',
+    CleanupPolicy_CleanupPolicySettingsForm_Format_FieldLabel: 'Format',
+    CleanupPolicy_CleanupPolicySettingsForm_Format_HelpText: 'The format that this cleanup policy can be applied to',
+    CleanupPolicy_CleanupPolicySettingsForm_Notes_FieldLabel: 'Notes',
+    CleanupPolicy_CleanupPolicySettingsForm_Criteria_Title :'Criteria',
+    CleanupPolicy_CleanupPolicySettingsForm_AddCriteria_Text: 'Add criteria',
+    CleanupPolicy_CleanupPolicySettingsForm_LastBlobUpdated_FieldLabel: 'Published Before',
+    CleanupPolicy_CleanupPolicySettingsForm_LastBlobUpdated_HelpText: 'Restrict cleanup to components that were published to NXRM more than the given number of days ago. (Blob updated date)',
+    CleanupPolicy_CleanupPolicySettingsForm_LastDownloaded_FieldLabel: 'Last Downloaded Before',
+    CleanupPolicy_CleanupPolicySettingsForm_LastDownloaded_HelpText: 'Restrict cleanup to components that were last downloaded more than the given number of days ago. (Last downloaded	date)',
+    CleanupPolicy_CleanupPolicySettingsForm_IsPrerelease_FieldLabel: 'Release Type',
+    CleanupPolicy_CleanupPolicySettingsForm_IsPrerelease_HelpText: 'Restrict cleanup to components that are of this release type',
+    CleanupPolicy_CleanupPolicySettingsForm_IsPrerelease_Prereleases_Item: 'Pre-Release / Snapshot Versions',
+    CleanupPolicy_CleanupPolicySettingsForm_IsPrerelease_Releases_Item: 'Release Versions',
+    CleanupPolicy_CleanupPolicyAdd_Create_Error: 'You do not have permission to create Cleanup Policies',
+    CleanupPolicy_CleanupPolicyAdd_Create_Success: 'Cleanup Policy created: ',
+    CleanupPolicy_CleanupPolicyPreviewWindow_Title: 'Cleanup Policy preview',
+    CleanupPolicy_CleanupPolicyPreviewWindow_repository_FieldLabel: 'Repository to Preview',
+    CleanupPolicy_CleanupPolicyPreviewWindow_repository_HelpText: 'Select a repository to preview what might get cleaned up if this policy was applied',
+    CleanupPolicy_CleanupPolicyPreviewWindow_repository_EmptyText: 'Select a repository',
+    CleanupPolicy_CleanupPolicyPreviewWindow_Preview_Button: 'Preview',
+    CleanupPolicy_CleanupPolicyPreviewWindow_EmptyText_View: 'No assets in repository matched the criteria',
+    CleanupPolicy_CleanupPolicyPreviewWindow_EmptyText_Filter: 'No assets matched "$filter"',
+    CleanupPolicy_CleanupPolicyPreviewWindow_Group_Column: 'Group',
+    CleanupPolicy_CleanupPolicyPreviewWindow_Name_Column: 'Name',
+    CleanupPolicy_CleanupPolicyPreviewWindow_Version_Column: 'Version',
+    CleanupPolicy_CleanupPolicyPreviewWindow_Total_Component_Count: 'Component count (matching criteria) viewing',
+    CleanupPolicy_CleanupPolicyPreviewWindow_Total_Component_Count_Out_Of: ' out of ',
+    CleanupPolicy_CleanupPolicyPreviewWindow_Warning: 'Results may only be a sample of what will be deleted using the current criteria',
 
     // Admin -> System -> Email Server
     SmtpSettings_Text: 'Email Server',
@@ -1122,6 +1176,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Tasks_RunConfirm_Title: 'Confirm?',
     Tasks_RunConfirm_HelpText: 'Run {0} task?',
     Tasks_Run_Success: 'Task started: {0}',
+    Tasks_Run_Disabled: 'Task is disabled',
     Task_TaskFeature_Stop_Button: 'Stop',
     Tasks_StopConfirm_Title: 'Confirm?',
     Tasks_StopConfirm_HelpText: 'Stop {0} task?',
@@ -1178,7 +1233,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     '<tr><td>Year(optional)</td><td>empty, 1970-2099</td></tr>' +
     '</tbody>' +
     '</table>' +
-    '<br/>'+
+    '<br/>' +
     '<p>Special tokens include: * (all acceptable values), ? (no specific value), - (ranges, e.g. 10-12)</p>' +
     '</div> '
     ,
@@ -1211,7 +1266,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     User_UserAccount_Password_Button: 'Change password',
 
     // User -> NuGet Api Key
-    NuGetApiKey_Text:'NuGet API Key',
+    NuGetApiKey_Text: 'NuGet API Key',
     NuGetApiKey_Description: 'Configure credentials for NuGet repositories',
     Nuget_NuGetApiKeyDetails_Html: 'Your NuGet API Key enables pushing packages using NuGet.exe. ' +
     '<span style="font-weight: bold;">Keep this key secret!</span>',
@@ -1245,7 +1300,7 @@ Ext.define('NX.coreui.app.PluginStrings', {
     Licensing_LicenseAgreement_Title: 'Nexus Repository Manager License Agreement',
     Licensing_LicenseAgreement_Yes_Button: 'I agree',
     Licensing_LicenseAgreement_No_Button: 'I do not agree',
-    Licensing_LicenseAgreement_Download_Button: 'Download a copy of the license.',
+    Licensing_LicenseAgreement_Download_Button: 'Download a copy of the agreement.',
     Licensing_Install_Success: 'License installed. Restart is only required if you are enabling new PRO features.',
     Licensing_Authentication_Validation: '{0} a license requires validation of your credentials.',
 
@@ -1261,14 +1316,15 @@ Ext.define('NX.coreui.app.PluginStrings', {
 
     //Nexus Lifecycle -> Server
     Clm_ClmSettings_Permission_Error: 'You do not have permission to configure IQ Server',
-    Clm_Text: 'Server',
+    Clm_Text: 'IQ Server',
     Clm_Description: 'Manage IQ Server configuration',
     Clm_Connection_Success: 'Connection to IQ Server verified: {0}',
-    Clm_Dashboard_Title: 'Dashboard',
-    Clm_Dashboard_Description : 'Open IQ Server Dashboard',
+    Clm_Dashboard_Link_Text: '<span class="x-fa fa-dashboard"></span>IQ Server Dashboard<span class="x-fa fa-external-link"></span>',
+    Clm_Dashboard_Description: 'Open IQ Server Dashboard',
+    Clm_Dashboard_Disabled_Tooltip: 'IQ Server must be enabled first',
     ClmSettings_Html: '<p><a href="http://www.sonatype.com/nexus/product-overview/nexus-lifecycle" target="_blank">IQ Server</a> ' +
-      'can evaluate application and organization policies.</p>' +
-      '<p>To enable this feature configure the IQ Server URL, username and password.</p>',
+    'can evaluate application and organization policies.</p>' +
+    '<p>To enable this feature configure the IQ Server URL, username and password.</p>',
 
     Clm_SettingsTestResults_Title: 'Applications',
     Clm_SettingsTestResults_EmptyText: 'No applications found',
@@ -1295,7 +1351,74 @@ Ext.define('NX.coreui.app.PluginStrings', {
     ClmSettings_Properties_FieldLabel: 'Properties',
     ClmSettings_Properties_HelpText: 'Additional properties to configure for IQ Server',
     ClmSettings_Properties_EmptyText: 'enter properties',
-    ClmSettings_Properties_Verify_Button: 'Verify connection'
+    ClmSettings_Properties_Verify_Button: 'Verify connection',
+    ClmSettings_Show_Link_FieldLabel: 'Show IQ Server Link',
+    ClmSettings_Show_Link_HelpText: 'Show IQ Server link in Browse menu when server is enabled',
+
+    RoutingRules_Text: 'Routing Rules',
+    RoutingRules_Description: 'Manage rules used to restrict which asset requests are handled by certain repositories',
+    RoutingRules_Name_Label: 'Name',
+    RoutingRules_Description_Label: 'Description',
+    RoutingRules_UsedBy_Label: 'Used by',
+    RoutingRules_Mode_Label: 'Mode',
+    RoutingRules_Mode_Allow_Text: 'ALLOW',
+    RoutingRules_Mode_Block_Text: 'BLOCK',
+    RoutingRules_Mode_Common_Text: 'requests when their path matches any of the following matchers',
+    RoutingRules_Rule_Label: 'Rule',
+    RoutingRules_Matchers_Label: 'Matchers:',
+    RoutingRules_Matchers_Description: 'Regular expressions used to identify request paths that are allowed or blocked (depending on above mode)',
+    RoutingRules_Matchers_Add_Button: 'Add another matcher',
+    RoutingRules_Matchers_Remove_Button: 'Remove matcher',
+    RoutingRules_List_EmptyText: 'No Routing Rules defined',
+    RoutingRules_List_Filter_EmptyText: 'Filter',
+    RoutingRules_Create_Button: 'Create Routing Rule',
+    RoutingRules_GlobalRoutingPreview_Button: 'Global Routing Preview',
+    RoutingRules_GlobalRoutingPreview_Title: 'Global Routing Preview',
+    RoutingRules_GlobalRoutingPreview_Test: 'Test Globally',
+    RoutingRules_GlobalRoutingPreview_Test_Tooltip: 'Test if the specified path will be allowed by the routing rules',
+    RoutingRules_GlobalRoutingPreview_Path_FieldLabel: 'Path',
+    RoutingRules_GlobalRoutingPreview_Path_HelpText: 'Type a path that will be used see whether the test request would be allowed or blocked',
+    RoutingRules_GlobalRoutingPreview_Path_EmptyText: 'e.g., /org/sonatype/nexus/nexus-common/3.15.2-01/nexus-common-3.15.2-01.jar',
+    RoutingRules_GlobalRoutingPreview_Grid_EmptyText: 'Run test to display results',
+    RoutingRules_GlobalRoutingPreview_Grid_Filter_EmptyText: 'No repositories matched "$filter"',
+    RoutingRules_GlobalRoutingPreview_Grid_Column_Repository: 'Repository',
+    RoutingRules_GlobalRoutingPreview_Grid_Column_RoutingRule: 'Routing Rule',
+    RoutingRules_GlobalRoutingPreview_Grid_Column_AllowedBlocked: 'Allowed / Blocked',
+    RoutingRules_GlobalRoutingPreview_Grid_Allowed: 'Allowed',
+    RoutingRules_GlobalRoutingPreview_Grid_Blocked: 'Blocked',
+    RoutingRules_GlobalRoutingPreview_Grid_None: 'None',
+    RoutingRules_GlobalRoutingPreview_Grid_TestResult: 'Test Result',
+    RoutingRules_GlobalRoutingPreview_SelectedRule_Title: 'Selected Routing Rule',
+    RoutingRules_SettingsForm_Update_Success: 'Routing Rule updated: {0}',
+    RoutingRules_SettingsForm_Update_Error: 'You do not have permission to update Routing Rules',
+    RoutingRules_Create_Title: 'Create Routing Rule',
+    RoutingRules_Settings_Title: 'Settings',
+    RoutingRules_Delete_Button: 'Delete Routing Rule',
+    RoutingRules_Delete_Button_Assigned_Tooltip: 'Routing Rule cannot be deleted while it is still assigned to a repository',
+    RoutingRules_Delete_400_Error_Message: 'Failed to delete routing rule. This rule might have been assigned to a repository after this settings page was opened.',
+    RoutingRule_Create_Message: 'Routing Rule created: {0}',
+    RoutingRule_Update_Message: 'Routing Rule updated: {0}',
+    RoutingRule_Delete_Message: 'Routing Rule deleted: {0}',
+    RoutingRules_SinglePreview_Title: 'Test This Routing Rule',
+    RoutingRules_SinglePreview_Path_Label: 'Request Path',
+    RoutingRules_SinglePreview_Path_HelpText: 'Requests always start with a leading slash',
+    RoutingRules_SinglePreview_Test_Button: 'Test',
+    RoutingRules_SinglePreview_Test_Button_Tooltip: 'Test if the specified path will be allowed by the routing rule',
+    RoutingRules_SinglePreview_Allowed_Html: '<span class="x-fa fa-check-circle"></span>This request would be allowed',
+    RoutingRules_SinglePreview_Blocked_Html: '<span class="x-fa fa-ban"></span>This request would be blocked',
+    RoutingRule_Create_Error: 'You do not have permission to create Routing Rules',
+    RoutingRule_Assign_Repositories: '<a href="#admin/repository/repositories">assign it to a repository</a>',
+    RoutingRule_UsedBy_Repository_Singular: 'repository',
+    RoutingRule_UsedBy_Repository_Plural: 'repositories',
+    RoutingRule_UsedBy_Info_Message: 'This rule is in use by {0} ({1})',
+    RoutingRule_UsedBy_Info_Message_Permitted: 'This rule is in use by {0}. Quick links to permitted repositories ({1})',
+    RoutingRule_UsedBy_Info_Tooltip: 'Repositories using this rule: {0}',
+    RoutingRules_UsedBy_EmptyTip: 'To use this rule, {0}.',
+    RoutingRule_UsedBy_Info_Tooltip_Permitted: 'Permitted repositories using this rule: {0}',
+    RoutingRules_Unknown_Api_Error_Message: 'An unknown error occurred. Reply from server: {0} - {1}',
+    RoutingRules_PreviewContext_AllRepositories: 'All Repositories',
+    RoutingRules_PreviewContext_AllGroups: 'All Group Repositories',
+    RoutingRules_PreviewContext_AllProxies: 'All Proxy Repositories'
   },
 
   /**
@@ -1332,7 +1455,9 @@ Ext.define('NX.coreui.app.PluginStrings', {
       Endpoint_FieldLabel: 'URL',
       Endpoint_HelpText: "The base URL of the remote server",
       Token_FieldLabel: 'Access Token',
-      Token_HelpText: "The access token from the remote server's upgrade-agent settings"
+      Token_HelpText: "The access token from the remote server's upgrade-agent settings",
+      FetchSize_FieldLabel: 'Fetch Size',
+      FetchSize_HelpText: "Batch size of changes pulled from NXRM2 at once. Lower the value if you are having issues during the Synchronizing step."
     },
 
     'NX.coreui.migration.AgentStep': {
@@ -1515,32 +1640,6 @@ Ext.define('NX.coreui.app.PluginStrings', {
 
       Done_Mask: 'Confirming',
       Done_Message: 'Upgrade done'
-    },
-
-    'NX.coreui.audit.AuditController': {
-      Text: 'Audit',
-      Description: 'System audit information',
-      Clear_Title: 'Clear Audit Data',
-      Clear_Body: 'Clear audit data?',
-      Clear_Mask: 'Clearing audit data',
-      Clear_Success: 'Audit data cleared'
-    },
-
-    'NX.coreui.audit.AuditList': {
-      EmptyText: 'No audit data',
-      Filter_EmptyText: 'No audit data matching "$filter"',
-      Domain: 'Domain',
-      Type: 'Type',
-      Context: 'Context',
-      Timestamp: 'Timestamp',
-      NodeId: 'Node ID',
-      Initiator: 'Initiator',
-      Attribute: 'Attribute: {0}',
-      Clear_Button: 'Clear'
-    },
-
-    'NX.coreui.controller.FileDescriptorWarnings': {
-      File_Descriptor_Warning: '<a href="http://links.sonatype.com/products/nexus/system-reqs#filehandles" target="_blank">System Requirement: max file descriptors [{0}] likely too low, increase to at least [{1}].</a>'
     }
   }
 }, function(self) {

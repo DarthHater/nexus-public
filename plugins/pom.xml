@@ -20,7 +20,7 @@
   <parent>
     <groupId>org.sonatype.nexus</groupId>
     <artifactId>nexus-parent</artifactId>
-    <version>3.11.0-SNAPSHOT</version>
+    <version>3.17.0-SNAPSHOT</version>
   </parent>
 
   <groupId>org.sonatype.nexus.plugins</groupId>
@@ -36,9 +36,12 @@
     <module>nexus-repository-httpbridge</module>
     <module>nexus-repository-maven</module>
     <module>nexus-repository-npm</module>
+    <module>nexus-repository-pypi</module>
     <module>nexus-repository-raw</module>
     <module>nexus-restore-maven</module>
     <module>nexus-restore-npm</module>
+    <module>nexus-restore-pypi</module>
+    <module>nexus-restore-raw</module>
     <module>nexus-script-plugin</module>
     <module>nexus-ssl-plugin</module>
     <module>nexus-task-log-cleanup</module>
@@ -53,7 +56,7 @@
         <groupId>org.sonatype.nexus.buildsupport</groupId>
         <artifactId>nexus-buildsupport-all</artifactId>
         <type>pom</type>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <scope>import</scope>
       </dependency>
 
@@ -64,13 +67,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-audit-plugin</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-audit-plugin</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -80,13 +83,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-blobstore-tasks</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-blobstore-tasks</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -96,13 +99,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-coreui-plugin</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-coreui-plugin</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -111,7 +114,7 @@
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-coreui-plugin</artifactId>
         <classifier>sources</classifier>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <!-- repository-httpbridge -->
@@ -119,13 +122,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-repository-httpbridge</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-repository-httpbridge</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -135,13 +138,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-repository-maven</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-repository-maven</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -149,13 +152,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-restore-maven</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-restore-maven</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -165,13 +168,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-repository-npm</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-repository-npm</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -179,13 +182,43 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-restore-npm</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-restore-npm</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
+        <classifier>features</classifier>
+        <type>xml</type>
+      </dependency>
+
+      <!-- repository-pypi -->
+
+      <dependency>
+        <groupId>org.sonatype.nexus.plugins</groupId>
+        <artifactId>nexus-repository-pypi</artifactId>
+        <version>3.17.0-SNAPSHOT</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.sonatype.nexus.plugins</groupId>
+        <artifactId>nexus-repository-pypi</artifactId>
+        <version>3.17.0-SNAPSHOT</version>
+        <classifier>features</classifier>
+        <type>xml</type>
+      </dependency>
+
+      <dependency>
+        <groupId>org.sonatype.nexus.plugins</groupId>
+        <artifactId>nexus-restore-pypi</artifactId>
+        <version>3.17.0-SNAPSHOT</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.sonatype.nexus.plugins</groupId>
+        <artifactId>nexus-restore-pypi</artifactId>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -195,13 +228,27 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-repository-raw</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-repository-raw</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
+        <classifier>features</classifier>
+        <type>xml</type>
+      </dependency>
+
+      <dependency>
+        <groupId>org.sonatype.nexus.plugins</groupId>
+        <artifactId>nexus-restore-raw</artifactId>
+        <version>3.17.0-SNAPSHOT</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.sonatype.nexus.plugins</groupId>
+        <artifactId>nexus-restore-raw</artifactId>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -211,13 +258,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-ssl-plugin</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-ssl-plugin</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -227,13 +274,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-script-plugin</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-script-plugin</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -243,13 +290,13 @@
       <dependency>
           <groupId>org.sonatype.nexus.plugins</groupId>
           <artifactId>nexus-task-log-cleanup</artifactId>
-          <version>3.11.0-SNAPSHOT</version>
+          <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
           <groupId>org.sonatype.nexus.plugins</groupId>
           <artifactId>nexus-task-log-cleanup</artifactId>
-          <version>3.11.0-SNAPSHOT</version>
+          <version>3.17.0-SNAPSHOT</version>
           <classifier>features</classifier>
           <type>xml</type>
       </dependency>
@@ -259,13 +306,13 @@
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-blobstore-s3</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
       </dependency>
 
       <dependency>
         <groupId>org.sonatype.nexus.plugins</groupId>
         <artifactId>nexus-blobstore-s3</artifactId>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <classifier>features</classifier>
         <type>xml</type>
       </dependency>
@@ -305,5 +352,36 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <!--
+      Activate this profile to create a deployable Karaf archive (KAR) for your plugin
+      -->
+      <id>buildKar</id>
+      <build>
+        <pluginManagement>
+          <plugins>
+            <plugin>
+              <groupId>org.apache.karaf.tooling</groupId>
+              <artifactId>karaf-maven-plugin</artifactId>
+              <executions>
+                <execution>
+                  <id>buildKar</id>
+                  <goals>
+                    <goal>kar</goal>
+                  </goals>
+                  <configuration>
+                    <resourcesDir>${project.basedir}/src/main/kar-resources</resourcesDir>
+                    <classifier>bundle</classifier>
+                  </configuration>
+                </execution>
+              </executions>
+            </plugin>
+          </plugins>
+        </pluginManagement>
+      </build>
+    </profile>
+  </profiles>
 
 </project>

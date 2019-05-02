@@ -17,14 +17,16 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.StreamSupport;
 
@@ -35,6 +37,7 @@ import javax.inject.Provider;
 import javax.inject.Singleton;
 
 import org.sonatype.goodies.common.ComponentSupport;
+import org.sonatype.nexus.common.event.EventManager;
 import org.sonatype.nexus.repository.Repository;
 import org.sonatype.nexus.repository.manager.RepositoryManager;
 import org.sonatype.nexus.repository.search.SearchSubjectHelper.SubjectRegistration;
@@ -55,8 +58,11 @@ import org.elasticsearch.action.admin.indices.validate.query.ValidateQueryRespon
 import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.search.ClearScrollRequest;
+import org.elasticsearch.action.search.ClearScrollResponse;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.SearchScrollRequestBuilder;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.IndicesAdminClient;
@@ -77,6 +83,7 @@ import org.elasticsearch.search.profile.ProfileShardResult;
 import org.elasticsearch.search.sort.SortBuilder;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Collections.emptyList;
 import static org.elasticsearch.index.query.QueryBuilders.idsQuery;
 import static org.sonatype.nexus.common.hash.HashAlgorithm.SHA1;
 import static org.sonatype.nexus.scheduling.CancelableHelper.checkCancellation;
@@ -114,7 +121,13 @@ public class SearchServiceImpl
 
   private final List<IndexSettingsContributor> indexSettingsContributors;
 
+  private EventManager eventManager;
+
+  private int calmTimeout;
+
   private final ConcurrentMap<String, String> repositoryNameMapping;
+
+  private final BulkIndexUpdateListener updateListener;
 
   private final boolean profile;
 
@@ -122,16 +135,20 @@ public class SearchServiceImpl
 
   private BulkProcessor bulkProcessor;
 
+  private final AtomicLong updateCount = new AtomicLong();
+
   /**
    * @param client source for a {@link Client}
    * @param repositoryManager the repositoryManager
    * @param securityHelper the securityHelper
    * @param searchSubjectHelper the searchSubjectHelper
-   * @param indexSettingsContributors the indexSetttingsContributors
+   * @param indexSettingsContributors the indexSettingsContributors
+   * @param eventManager the eventManager
    * @param profile whether or not to profile elasticsearch queries (default: false)
    * @param bulkCapacity how many bulk requests to batch before they're automatically flushed (default: 1000)
    * @param concurrentRequests how many bulk requests to execute concurrently (default: 1; 0 means execute synchronously)
    * @param flushInterval how long to wait in milliseconds between flushing bulk requests (default: 0, instantaneous)
+   * @param calmTimeout timeout in ms to wait for a calm period
    */
   @Inject
   public SearchServiceImpl(final Provider<Client> client, //NOSONAR
@@ -139,22 +156,27 @@ public class SearchServiceImpl
                            final SecurityHelper securityHelper,
                            final SearchSubjectHelper searchSubjectHelper,
                            final List<IndexSettingsContributor> indexSettingsContributors,
+                           final EventManager eventManager,
                            @Named("${nexus.elasticsearch.profile:-false}") final boolean profile,
                            @Named("${nexus.elasticsearch.bulkCapacity:-1000}") final int bulkCapacity,
                            @Named("${nexus.elasticsearch.concurrentRequests:-1}") final int concurrentRequests,
-                           @Named("${nexus.elasticsearch.flushInterval:-0}") final int flushInterval)
+                           @Named("${nexus.elasticsearch.flushInterval:-0}") final int flushInterval,
+                           @Named("${nexus.elasticsearch.calmTimeout:-3000}") final int calmTimeout)
   {
     this.client = checkNotNull(client);
     this.repositoryManager = checkNotNull(repositoryManager);
     this.securityHelper = checkNotNull(securityHelper);
     this.searchSubjectHelper = checkNotNull(searchSubjectHelper);
     this.indexSettingsContributors = checkNotNull(indexSettingsContributors);
+    this.eventManager = eventManager;
+    this.calmTimeout = calmTimeout;
     this.repositoryNameMapping = Maps.newConcurrentMap();
+    this.updateListener = new BulkIndexUpdateListener();
     this.profile = profile;
     this.periodicFlush = flushInterval > 0;
 
     this.bulkProcessor = BulkProcessor
-        .builder(client.get(), new BulkIndexUpdateListener())
+        .builder(client.get(), updateListener)
         .setBulkActions(bulkCapacity)
         .setBulkSize(new ByteSizeValue(-1)) // turn off automatic flush based on size in bytes
         .setConcurrentRequests(concurrentRequests)
@@ -163,9 +185,76 @@ public class SearchServiceImpl
   }
 
   @Override
-  public void flush() {
+  public void flush(final boolean fsync) {
     log.debug("Flushing index requests");
     bulkProcessor.flush();
+
+    if (fsync) {
+      try {
+        indicesAdminClient().prepareSyncedFlush().execute().actionGet();
+      }
+      catch (RuntimeException e) {
+        log.warn("Problem flushing search indices", e);
+      }
+    }
+  }
+
+  @Override
+  public boolean isCalmPeriod() {
+    if (updateListener.inflightRequestCount() > 0) {
+      return false;
+    }
+
+    try {
+      // now it's calm make sure updates are available for searching
+      indicesAdminClient().prepareRefresh().execute().actionGet();
+    }
+    catch (RuntimeException e) {
+      log.warn("Problem refreshing search indices", e);
+    }
+
+    return true;
+  }
+
+  @Override
+  public void waitForCalm() {
+    try {
+      waitFor(eventManager::isCalmPeriod);
+      flush(false); // no need for full fsync here
+      waitFor(this::isCalmPeriod);
+    }
+    catch (InterruptedException e) {
+      throw new RuntimeException("Waiting for calm period has been interrupted", e);
+    }
+  }
+
+  private void waitFor(final Callable<Boolean> function)
+      throws InterruptedException
+  {
+    Thread.yield();
+    long end = System.currentTimeMillis() + calmTimeout;
+    do {
+      try {
+        if (function.call()) {
+          return; // success
+        }
+      }
+      catch (final InterruptedException e) {
+        throw e; // cancelled
+      }
+      catch (final Exception e) { //NOSONAR
+        log.debug("Exception thrown whilst waiting", e);
+      }
+      Thread.sleep(100);
+    }
+    while (System.currentTimeMillis() <= end);
+
+    log.warn("Timed out waiting for {} after {} ms", function, calmTimeout);
+  }
+
+  @Override
+  public long getUpdateCount() {
+    return updateCount.get();
   }
 
   @Override
@@ -235,6 +324,7 @@ public class SearchServiceImpl
     }
   }
 
+  @Override
   public void rebuildIndex(final Repository repository) {
     checkNotNull(repository);
     String indexName = repositoryNameMapping.remove(repository.getName());
@@ -254,6 +344,7 @@ public class SearchServiceImpl
     if (indexName == null) {
       return;
     }
+    updateCount.getAndIncrement();
     log.debug("Adding to index document {} from {}: {}", identifier, repository, json);
     client.get().prepareIndex(indexName, TYPE, identifier).setSource(json).execute(
         new ActionListener<IndexResponse>() {
@@ -286,6 +377,8 @@ public class SearchServiceImpl
       String identifier = identifierProducer.apply(component);
       String json = jsonDocumentProducer.apply(component);
       if (json != null) {
+        updateCount.getAndIncrement();
+        log.debug("Bulk adding to index document {} from {}: {}", identifier, repository, json);
         bulkProcessor.add(
             client.get()
                 .prepareIndex(indexName, TYPE, identifier)
@@ -332,8 +425,10 @@ public class SearchServiceImpl
         return; // index has gone, nothing to delete
       }
 
-      identifiers.forEach(id ->
-          bulkProcessor.add(client.get().prepareDelete(indexName, TYPE, id).request()));
+      identifiers.forEach(id -> {
+        log.debug("Bulk removing from index document {} from {}", id, repository);
+        bulkProcessor.add(client.get().prepareDelete(indexName, TYPE, id).request());
+      });
     }
     else {
 
@@ -350,8 +445,10 @@ public class SearchServiceImpl
             .execute()
             .actionGet();
 
-        toDelete.getHits().forEach(hit ->
-            bulkProcessor.add(client.get().prepareDelete(hit.index(), TYPE, hit.getId()).request()));
+        toDelete.getHits().forEach(hit -> {
+          log.debug("Bulk removing from index document {} from {}", hit.getId(), hit.index());
+          bulkProcessor.add(client.get().prepareDelete(hit.index(), TYPE, hit.getId()).request());
+        });
       });
     }
 
@@ -360,14 +457,58 @@ public class SearchServiceImpl
     }
   }
 
+  /**
+   * Use this method with caution. It makes use of the scroll API in ElasticSearch which is not thread safe. If two
+   * matching queries are received from different threads within the configured 1 minute it is possible that scrolling 
+   * through the data will return different pages of the same result set to each of the threads.
+   *
+   * For additional context see: https://issues.sonatype.org/browse/NEXUS-18847
+   * 
+   * @param query
+   * @return an Iterable wrapping the scroll context which times out if not used within 1 minute
+   */
   @Override
   public Iterable<SearchHit> browseUnrestricted(final QueryBuilder query) {
     return browseUnrestrictedInRepos(query, null);
   }
 
+  /**
+   * Use this method with caution. It makes use of the scroll API in ElasticSearch which is not thread safe. If two
+   * matching queries are received from different threads within the configured 1 minute it is possible that scrolling 
+   * through the data will return different pages of the same result set to each of the threads.
+   *
+   * For additional context see: https://issues.sonatype.org/browse/NEXUS-18847
+   * 
+   * @param query
+   * @param repoNames
+   * @return an Iterable wrapping the scroll context which times out if not used within 1 minute
+   */
   @Override
   public Iterable<SearchHit> browseUnrestrictedInRepos(final QueryBuilder query,
                                                        @Nullable final Collection<String> repoNames) {
+    return browse(query, repoNames, false, true);
+  }
+
+  /**
+   * Use this method with caution. It makes use of the scroll API in ElasticSearch which is not thread safe. If two
+   * matching queries are received from different threads within the configured 1 minute it is possible that scrolling 
+   * through the data will return different pages of the same result set to each of the threads.
+   *
+   * For additional context see: https://issues.sonatype.org/browse/NEXUS-18847
+   * 
+   * @param query
+   * @return an Iterable wrapping the scroll context which times out if not used within 1 minute
+   */
+  @Override
+  public Iterable<SearchHit> browse(final QueryBuilder query) {
+    return browse(query, null, true, false);
+  }
+
+  private Iterable<SearchHit> browse(final QueryBuilder query,
+                                     @Nullable final Collection<String> repoNames,
+                                     final boolean skipContentPermForIndexes,
+                                     final boolean skipContentPermForSearch)
+  {
     checkNotNull(query);
     try {
       if (!indicesAdminClient().prepareValidateQuery().setQuery(query).execute().actionGet().isValid()) {
@@ -376,66 +517,33 @@ public class SearchServiceImpl
     }
     catch (IndexNotFoundException e) {
       // no repositories were created yet, so there is no point in searching
-      return null;
+      return emptyList();
     }
-    final String[] searchableIndexes = getSearchableIndexes(false, repoNames);
+    final String[] searchableIndexes = getSearchableIndexes(skipContentPermForIndexes, repoNames);
     if (searchableIndexes.length == 0) {
-      return Collections.emptyList();
+      return emptyList();
     }
-    return new Iterable<SearchHit>()
-    {
-      @Override
-      public Iterator<SearchHit> iterator() {
-        return new Iterator<SearchHit>()
-        {
-          private SearchResponse response;
+    return () -> new SearchHitIterator(query, searchableIndexes, skipContentPermForSearch);
+  }
 
-          private Iterator<SearchHit> iterator;
+  @Override
+  public SearchResponse searchUnrestrictedInRepos(final QueryBuilder query,
+                                                  @Nullable final List<SortBuilder> sort,
+                                                  final int from,
+                                                  final int size,
+                                                  final Collection<String> repoNames)
+  {
+    if (!validateQuery(query)) {
+      return EMPTY_SEARCH_RESPONSE;
+    }
 
-          private boolean noMoreHits = false;
+    final String[] searchableIndexes = getSearchableIndexes(false, repoNames);
 
-          @Override
-          public boolean hasNext() {
-            if (noMoreHits) {
-              return false;
-            }
-            if (response == null) {
-              response = client.get().prepareSearch(searchableIndexes)
-                  .setTypes(TYPE)
-                  .setQuery(query)
-                  .setScroll(new TimeValue(1, TimeUnit.MINUTES))
-                  .setSize(100)
-                  .execute()
-                  .actionGet();
-              iterator = Arrays.asList(response.getHits().getHits()).iterator();
-              noMoreHits = !iterator.hasNext();
-            }
-            else if (!iterator.hasNext()) {
-              response = client.get().prepareSearchScroll(response.getScrollId())
-                  .setScroll(new TimeValue(1, TimeUnit.MINUTES))
-                  .execute()
-                  .actionGet();
-              iterator = Arrays.asList(response.getHits().getHits()).iterator();
-              noMoreHits = !iterator.hasNext();
-            }
-            return iterator.hasNext();
-          }
+    if (searchableIndexes.length == 0) {
+      return EMPTY_SEARCH_RESPONSE;
+    }
 
-          @Override
-          public SearchHit next() {
-            if (!hasNext()) {
-              throw new NoSuchElementException();
-            }
-            return iterator.next();
-          }
-
-          @Override
-          public void remove() {
-            throw new UnsupportedOperationException();
-          }
-        };
-      }
-    };
+    return executeSearch(query, searchableIndexes, from, size, sort, null);
   }
 
   @Override
@@ -574,7 +682,7 @@ public class SearchServiceImpl
     return response.getHits().totalHits();
   }
 
-  private boolean validateQuery(QueryBuilder query) {
+  private boolean validateQuery(final QueryBuilder query) {
     checkNotNull(query);
     try {
       ValidateQueryResponse validateQueryResponse = indicesAdminClient().prepareValidateQuery()
@@ -623,7 +731,7 @@ public class SearchServiceImpl
         .toArray(String[]::new);
   }
 
-  private static boolean repoOnlineAndHasSearchFacet(Repository repo) {
+  private static boolean repoOnlineAndHasSearchFacet(final Repository repo) {
     return repo.optionalFacet(SearchFacet.class).isPresent() && repo.getConfiguration().isOnline();
   }
 
@@ -647,6 +755,96 @@ public class SearchServiceImpl
         catch (IOException e) {
           log.error("Error writing elasticsearch profile result", e);
         }
+      }
+    }
+  }
+
+  private class SearchHitIterator
+      implements Iterator<SearchHit>
+  {
+    private final QueryBuilder query;
+
+    private final String[] searchableIndexes;
+
+    private final boolean skipPermissionCheck;
+
+    private SearchResponse response;
+
+    private Iterator<SearchHit> iterator;
+
+    private boolean noMoreHits = false;
+
+    private SearchHitIterator(final QueryBuilder query,
+                              final String[] searchableIndexes, // NOSONAR
+                              final boolean skipPermissionCheck)
+    {
+      this.query = query;
+      this.searchableIndexes = searchableIndexes;
+      this.skipPermissionCheck = skipPermissionCheck;
+    }
+
+    @Override
+    public boolean hasNext() {
+      if (noMoreHits) {
+        return false;
+      }
+      if (response == null) {
+        SearchRequestBuilder builder = client.get().prepareSearch(searchableIndexes)
+            .setTypes(TYPE)
+            .setQuery(query)
+            .setScroll(new TimeValue(1, TimeUnit.MINUTES))
+            .setSize(100)
+            .setProfile(profile);
+        if (!skipPermissionCheck) {
+          try (SubjectRegistration registration = searchSubjectHelper.register(securityHelper.subject())) {
+            QueryBuilder permissionsFilter =
+                QueryBuilders.scriptQuery(ContentAuthPluginScriptFactory.newScript(registration.getId()));
+            builder.setPostFilter(permissionsFilter);
+            response = builder.execute().actionGet();
+          }
+        }
+        else {
+          response = builder.execute().actionGet();
+        }
+        iterator = Arrays.asList(response.getHits().getHits()).iterator();
+        noMoreHits = !iterator.hasNext();
+      }
+      else if (!iterator.hasNext()) {
+        SearchScrollRequestBuilder builder = client.get().prepareSearchScroll(response.getScrollId())
+            .setScroll(new TimeValue(1, TimeUnit.MINUTES));
+        response = builder.execute().actionGet();
+        iterator = Arrays.asList(response.getHits().getHits()).iterator();
+        noMoreHits = !iterator.hasNext();
+      }
+      return iterator.hasNext();
+    }
+
+    @Override
+    public SearchHit next() {
+      if (!hasNext()) {
+        throw new NoSuchElementException();
+      }
+      return iterator.next();
+    }
+
+    @Override
+    public void remove() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void forEachRemaining(final Consumer<? super SearchHit> action) {
+      Iterator.super.forEachRemaining(action);
+      closeScrollId();
+    }
+
+    private void closeScrollId() {
+      log.debug("Clearing scroll id {}", response.getScrollId());
+      ClearScrollRequest clearScrollRequest = new ClearScrollRequest();
+      clearScrollRequest.addScrollId(response.getScrollId());
+      ClearScrollResponse clearScrollResponse = client.get().clearScroll(clearScrollRequest).actionGet();
+      if (!clearScrollResponse.isSucceeded()) {
+        log.info("Unable to close scroll id {}", response.getScrollId());
       }
     }
   }

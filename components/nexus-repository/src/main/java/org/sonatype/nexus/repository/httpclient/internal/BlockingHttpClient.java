@@ -20,12 +20,15 @@ import javax.net.ssl.SSLPeerUnverifiedException;
 import org.sonatype.goodies.common.Time;
 import org.sonatype.nexus.common.sequence.FibonacciNumberSequence;
 import org.sonatype.nexus.common.sequence.NumberSequence;
+import org.sonatype.nexus.repository.httpclient.AutoBlockConfiguration;
 import org.sonatype.nexus.repository.httpclient.FilteredHttpClientSupport;
 import org.sonatype.nexus.repository.httpclient.RemoteBlockedIOException;
 import org.sonatype.nexus.repository.httpclient.RemoteConnectionStatus;
 import org.sonatype.nexus.repository.httpclient.RemoteConnectionStatusObserver;
 import org.sonatype.nexus.repository.httpclient.RemoteConnectionStatusType;
+import org.sonatype.nexus.repository.httpclient.internal.HttpClientFacetImpl.Config;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.http.HttpHost;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpHead;
@@ -38,9 +41,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static java.lang.Thread.currentThread;
 import static java.util.Locale.ENGLISH;
-import static org.apache.http.HttpStatus.SC_UNAUTHORIZED;
-import static org.sonatype.nexus.repository.http.HttpStatus.PROXY_AUTHENTICATION_REQUIRED;
 import static org.sonatype.nexus.repository.httpclient.RemoteConnectionStatusType.AUTO_BLOCKED_UNAVAILABLE;
 import static org.sonatype.nexus.repository.httpclient.RemoteConnectionStatusType.AVAILABLE;
 import static org.sonatype.nexus.repository.httpclient.RemoteConnectionStatusType.BLOCKED;
@@ -61,11 +63,14 @@ public class BlockingHttpClient
 
   private final boolean blocked;
 
+  @VisibleForTesting
+  final AutoBlockConfiguration autoBlockConfiguration;
+
   private HttpHost mainTarget;
 
   private DateTime blockedUntil;
 
-  private Thread checkThread;
+  private Thread checkStatusThread;
 
   private final boolean autoBlock;
 
@@ -76,13 +81,16 @@ public class BlockingHttpClient
   private RemoteConnectionStatus status = new RemoteConnectionStatus(UNINITIALISED);
 
   public BlockingHttpClient(final CloseableHttpClient delegate,
-                            final HttpClientFacetImpl.Config config,
+                            final Config config,
                             final RemoteConnectionStatusObserver statusObserver,
-                            final boolean repositoryOnline)
+                            final boolean repositoryOnline,
+                            final AutoBlockConfiguration autoBlockConfiguration)
   {
     super(delegate);
     checkNotNull(config);
     this.statusObserver = checkNotNull(statusObserver);
+    this.autoBlockConfiguration = checkNotNull(autoBlockConfiguration);
+    
     blocked = config.blocked != null ? config.blocked : false;
     autoBlock = config.autoBlock != null ? config.autoBlock : false;
     if (repositoryOnline) {
@@ -116,7 +124,7 @@ public class BlockingHttpClient
       CloseableHttpResponse response = filterable.call();
       int statusCode = response.getStatusLine().getStatusCode();
 
-      if (isUnavailableStatus(statusCode)) {
+      if (autoBlockConfiguration.shouldBlock(statusCode)) {
         updateStatusToUnavailable(getReason(statusCode), target);
       }
       else {
@@ -135,8 +143,7 @@ public class BlockingHttpClient
   private synchronized void updateStatusToAvailable() {
     if (autoBlock && blockedUntil != null) {
       blockedUntil = null;
-      checkThread.interrupt();
-      checkThread = null;
+      interruptCheckStatusThread();
       autoBlockSequence.reset();
     }
     updateStatus(AVAILABLE);
@@ -147,20 +154,23 @@ public class BlockingHttpClient
       // avoid some other thread already increased the sequence
       if (blockedUntil == null || blockedUntil.isBeforeNow()) {
         blockedUntil = DateTime.now().plus(autoBlockSequence.next());
-        if (checkThread != null) {
-          checkThread.interrupt();
-        }
+        interruptCheckStatusThread();
         String uri = target.toURI();
         // TODO maybe find different means to schedule status checking
-        checkThread = new Thread(new CheckStatus(uri, blockedUntil), "Check Status " + uri);
-        checkThread.setDaemon(true);
-        checkThread.start();
+        scheduleCheckStatus(uri, blockedUntil);
       }
       updateStatus(AUTO_BLOCKED_UNAVAILABLE, reason, target.toURI(), blockedUntil.isAfter(status.getBlockedUntil()));
     }
     else {
       updateStatus(UNAVAILABLE, reason, target.toURI(), false);
     }
+  }
+
+  @VisibleForTesting
+  void scheduleCheckStatus(final String uri, final DateTime until) {
+    checkStatusThread = new Thread(new CheckStatus(uri, until), "Check Status " + uri);
+    checkStatusThread.setDaemon(true);
+    checkStatusThread.start();
   }
 
   private void updateStatus(final RemoteConnectionStatusType type,
@@ -192,10 +202,6 @@ public class BlockingHttpClient
     return true;
   }
 
-  private boolean isUnavailableStatus(final int statusCode) {
-    return statusCode == SC_UNAUTHORIZED || statusCode == PROXY_AUTHENTICATION_REQUIRED || statusCode >= 500;
-  }
-
   private String getReason(final Exception e) {
     if (e instanceof SSLPeerUnverifiedException) {
       return "Untrusted Remote";
@@ -210,16 +216,23 @@ public class BlockingHttpClient
 
   @Override
   public void close() throws IOException {
-    if (checkThread != null) {
-      checkThread.interrupt();
-    }
+    interruptCheckStatusThread();
     super.close();
+  }
+
+  private void interruptCheckStatusThread() {
+    if (checkStatusThread != null) {
+      // avoid self-interrupt (status may change during thread's HEAD request)
+      if (checkStatusThread != currentThread()) {
+        checkStatusThread.interrupt();
+      }
+      checkStatusThread = null;
+    }
   }
 
   private class CheckStatus
       implements Runnable
   {
-
     private final String uri;
 
     private final DateTime fireAt;
@@ -249,7 +262,6 @@ public class BlockingHttpClient
         }
       }
     }
-
   }
 
 }

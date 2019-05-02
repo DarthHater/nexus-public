@@ -17,9 +17,11 @@ import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.Set;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -31,9 +33,6 @@ import org.sonatype.nexus.common.collect.NestedAttributesMap;
 import org.sonatype.nexus.common.entity.EntityHelper;
 import org.sonatype.nexus.common.entity.EntityId;
 import org.sonatype.nexus.common.hash.HashAlgorithm;
-import org.sonatype.nexus.common.property.SystemPropertiesHelper;
-import org.sonatype.nexus.common.sequence.NumberSequence;
-import org.sonatype.nexus.common.sequence.RandomExponentialSequence;
 import org.sonatype.nexus.common.stateguard.Guarded;
 import org.sonatype.nexus.common.stateguard.StateGuard;
 import org.sonatype.nexus.common.stateguard.StateGuardAware;
@@ -42,7 +41,9 @@ import org.sonatype.nexus.common.text.Strings2;
 import org.sonatype.nexus.mime.MimeRulesSource;
 import org.sonatype.nexus.repository.Format;
 import org.sonatype.nexus.repository.IllegalOperationException;
+import org.sonatype.nexus.repository.InvalidContentException;
 import org.sonatype.nexus.repository.Repository;
+import org.sonatype.nexus.transaction.RetryController;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
@@ -61,6 +62,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static java.lang.String.format;
 import static org.sonatype.nexus.common.entity.EntityHelper.id;
+import static org.sonatype.nexus.repository.proxy.ProxyFacetSupport.isDownloading;
 import static org.sonatype.nexus.repository.storage.Asset.CHECKSUM;
 import static org.sonatype.nexus.repository.storage.Asset.HASHES_NOT_VERIFIED;
 import static org.sonatype.nexus.repository.storage.Asset.PROVENANCE;
@@ -78,11 +80,6 @@ public class StorageTxImpl
     implements StorageTx, StateGuardAware
 {
   private static final Logger log = LoggerFactory.getLogger(StorageTxImpl.class);
-
-  private static final int INITIAL_DELAY_MS = SystemPropertiesHelper
-      .getInteger(StorageTxImpl.class.getName() + ".retrydelay.initial", 10);
-
-  private static final int MAX_RETRIES = 8;
 
   private final String createdBy;
 
@@ -115,8 +112,6 @@ public class StorageTxImpl
   private final ComponentFactory componentFactory;
 
   private int retries = 0;
-
-  private NumberSequence retryDelay;
 
   public StorageTxImpl(final String createdBy,
                        final String createdByIp,
@@ -178,7 +173,7 @@ public class StorageTxImpl
   @Override
   @Transitions(from = ACTIVE, to = OPEN, silent = true)
   public void commit() {
-    db.commit();
+    db.commit(); // this must happen _before_ we commit any blob changes
     blobTx.commit();
     retries = 0;
   }
@@ -200,28 +195,13 @@ public class StorageTxImpl
    */
   @Override
   public boolean allowRetry(final Exception cause) throws RetryDeniedException {
-    if (retries < MAX_RETRIES) {
-      try {
-        if (retryDelay == null) {
-          retryDelay = delaySequence();
-        }
-        long delay = retryDelay.next();
-        log.trace("Delaying tx retry for {}ms", delay);
-        Thread.sleep(delay);
-      }
-      catch (InterruptedException e) {
-        throw new RuntimeException(e);
-      }
-
+    if (RetryController.INSTANCE.allowRetry(retries, cause)) {
       retries++;
-      log.debug("Retrying operation: {}/{}", retries, MAX_RETRIES);
       return true;
     }
-
-    String message = format("Reached max retries: %d/%d", retries, MAX_RETRIES);
-    log.warn(message);
-
-    throw new RetryDeniedException(message, cause);
+    else {
+      throw new RetryDeniedException("Exceeded retry limit", cause);
+    }
   }
 
   @Override
@@ -301,6 +281,13 @@ public class StorageTxImpl
 
   @Override
   @Guarded(by = ACTIVE)
+  public Iterable<Asset> browseAssets(final Query query, final Bucket bucket) {
+    return assetEntityAdapter.browseByQueryAsync(db, query.getWhere(), query.getParameters(), ImmutableList.of(bucket), 
+        query.getQuerySuffix());
+  }
+
+  @Override
+  @Guarded(by = ACTIVE)
   public Asset firstAsset(final Component component) {
     return Iterables.getFirst(browseAssets(component), null);
   }
@@ -309,6 +296,12 @@ public class StorageTxImpl
   @Guarded(by = ACTIVE)
   public Iterable<Component> browseComponents(final Bucket bucket) {
     return componentEntityAdapter.browseByBucket(db, bucket);
+  }
+
+  @Override
+  public Iterable<Component> browseComponents(final Query query, final Bucket bucket) {
+    return componentEntityAdapter.browseByQueryAsync(db, query.getWhere(), query.getParameters(), 
+        ImmutableList.of(bucket), query.getQuerySuffix());
   }
 
   @Nullable
@@ -396,6 +389,17 @@ public class StorageTxImpl
     return componentEntityAdapter.exists(db, group, name, version, bucketOf(repository.getName()));
   }
 
+  @Override
+  @Guarded(by = ACTIVE)
+  public boolean assetExists(final String name,
+                             final Repository repository)
+  {
+    checkNotNull(name);
+    checkNotNull(repository);
+
+    return assetEntityAdapter.exists(db, name, bucketOf(repository.getName()));
+  }
+
   @Nullable
   @Override
   @Guarded(by = ACTIVE)
@@ -475,6 +479,9 @@ public class StorageTxImpl
     asset.bucketId(id(bucket));
     asset.format(format);
     asset.attributes(new NestedAttributesMap(P_ATTRIBUTES, new HashMap<>()));
+    if (isDownloading()) {
+      asset.lastDownloaded(DateTime.now());
+    }
     return asset;
   }
 
@@ -530,23 +537,27 @@ public class StorageTxImpl
 
   @Override
   @Guarded(by = ACTIVE)
-  public void deleteComponent(final Component component) {
-    deleteComponent(component, true);
+  public Set<String> deleteComponent(final Component component) {
+    return deleteComponent(component, true);
   }
 
   @Override
   @Guarded(by = ACTIVE)
-  public void deleteComponent(final Component component, final boolean deleteBlobs) {
-    deleteComponent(component, true, deleteBlobs);
+  public Set<String> deleteComponent(final Component component, final boolean deleteBlobs) {
+    return deleteComponent(component, true, deleteBlobs);
   }
 
-  private void deleteComponent(final Component component, final boolean checkWritePolicy, final boolean deleteBlobs) {
+  private Set<String> deleteComponent(final Component component, final boolean checkWritePolicy, final boolean deleteBlobs) {
     checkNotNull(component);
+
+    Set<String> deletedAssets = new HashSet<>();
 
     for (Asset asset : browseAssets(component)) {
       deleteAsset(asset, checkWritePolicy ? writePolicySelector.select(asset, writePolicy) : null, deleteBlobs);
+      deletedAssets.add(asset.name());
     }
     componentEntityAdapter.deleteEntity(db, component);
+    return deletedAssets;
   }
 
   @Override
@@ -786,14 +797,16 @@ public class StorageTxImpl
           if (!effectiveWritePolicy.checkUpdateAllowed()) {
             throw new IllegalOperationException("Repository does not allow updating assets: " + repositoryName);
           }
+
           assetBlob.setDuplicate(oldBlob);
+          
           return true;
         }
       }
     }
     return false;
   }
-
+  
   /**
    * Deletes the existing blob for the asset if one exists, updating the blob updated field if necessary. The
    * write policy will be enforced for this operation and will throw an exception if updates are not supported.
@@ -926,13 +939,20 @@ public class StorageTxImpl
                                       @Nullable final String declaredContentType)
       throws IOException
   {
-    return contentValidator.determineContentType(
-        strictContentValidation,
-        inputStreamSupplier,
-        mimeRulesSource,
-        blobName,
-        declaredContentType
-    );
+    try {
+      return contentValidator.determineContentType(
+          strictContentValidation,
+          inputStreamSupplier,
+          mimeRulesSource,
+          blobName,
+          declaredContentType
+      );
+    }
+    catch (InvalidContentException e) {
+      log.warn(
+          "An exception occurred determining the content type of asset {} in repository {}", blobName, repositoryName);
+      throw e;
+    }
   }
 
   /**
@@ -967,13 +987,5 @@ public class StorageTxImpl
       bucketsBuilder.add(bucketOf(repository.getName()));
     }
     return bucketsBuilder.build();
-  }
-
-  private NumberSequence delaySequence() {
-    return RandomExponentialSequence.builder()
-        .start(INITIAL_DELAY_MS) // start at 10ms
-        .factor(2) // delay an average of 100% longer, each time
-        .maxDeviation(.5) // ±50%
-        .build();
   }
 }

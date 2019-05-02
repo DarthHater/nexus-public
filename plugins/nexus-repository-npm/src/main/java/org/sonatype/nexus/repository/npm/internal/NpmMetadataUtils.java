@@ -12,8 +12,9 @@
  */
 package org.sonatype.nexus.repository.npm.internal;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 
@@ -22,6 +23,7 @@ import javax.annotation.Nullable;
 
 import org.sonatype.nexus.common.app.BaseUrlHolder;
 import org.sonatype.nexus.common.collect.NestedAttributesMap;
+import org.sonatype.nexus.repository.view.Content;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Maps;
@@ -29,7 +31,9 @@ import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 import org.joda.time.format.DateTimeFormatter;
 import org.joda.time.format.ISODateTimeFormat;
-import se.sawano.java.text.AlphanumericComparator;
+
+import static com.google.common.collect.Lists.newArrayList;
+import static org.sonatype.nexus.repository.npm.internal.NpmVersionComparator.versionComparator;
 
 /**
  * npm utilities for manipulating npm metadata.
@@ -44,8 +48,6 @@ public final class NpmMetadataUtils
 
   @VisibleForTesting
   static final DateTimeFormatter NPM_TIMESTAMP_FORMAT = ISODateTimeFormat.dateTime().withZone(DateTimeZone.UTC);
-
-  private static final AlphanumericComparator versionComparator = new AlphanumericComparator(Locale.US);
 
   static final String NAME = "name";
 
@@ -63,7 +65,7 @@ public final class NpmMetadataUtils
 
   private static final String CREATED = "created";
 
-  private static final String LATEST = "latest";
+  static final String LATEST = "latest";
 
   static final String DIST = "dist";
 
@@ -192,6 +194,27 @@ public final class NpmMetadataUtils
   }
 
   /**
+   * Rewrites dist/tarball entry URLs to point back to this Nexus instance and given repository.
+   *
+   * @param repositoryName    Name of the repository we want to point this at.
+   * @param name              Name of the Asset/NPM Package ID
+   * @param currentTarballUrl The real/original tarball url
+   * @return String with local NXRM url
+   */
+  static String rewriteTarballUrl(final String repositoryName, final String name, final String currentTarballUrl) {
+    if (BaseUrlHolder.isSet()) {
+      return String.format(
+          "%s/repository/%s/%s/-/%s",
+          BaseUrlHolder.get(),
+          repositoryName,
+          name,
+          extractTarballName(currentTarballUrl));
+    }
+
+    return currentTarballUrl;
+  }
+
+  /**
    * Create a path within a repository for a tarball.
    *
    * @since 3.8
@@ -256,6 +279,33 @@ public final class NpmMetadataUtils
   }
 
   /**
+   * Merges package metadata into a new metadata object in given order: last one prevails. Also, since merged document
+   * should not be edited (should be considered Read Only), this method removes attributes like {@code _id} and
+   * {@code _rev} to make it un-editable by npm client. Package versions are NOT merged, they are replaced. Finally,
+   * this method maintains the "dist-tags/latest" tag, setting it to latest version that won over the merge. The
+   * packages must have same name, this is enforced.
+   *
+   * @param contents The list of contents to merge in order.
+   */
+  public static NestedAttributesMap mergeContents(final List<Content> contents) throws IOException {
+    List<InputStream> streams = newArrayList();
+    for (Content content : contents) {
+      streams.add(content.openInputStream());
+    }
+    return new NpmMergeObjectMapper().merge(streams);
+  }
+
+  /**
+   * Similar to {@link #mergeContents(List)} but only for a single content, allowing for the same manner of parsing
+   * the output map as the merged ones.
+   *
+   * @param content The content to parse into a {@link NestedAttributesMap}
+   */
+  public static NestedAttributesMap parseContent(final Content content) throws IOException {
+    return new NpmMergeObjectMapper().read(content.openInputStream());
+  }
+
+  /**
    * Overlays two npm metadata objects, with care about "shrunk" (version document-less) input. The {@code recessive}
    * input is changed, by overlaying the {@code dominant} input, while {@code dominant} is NOT changed.
    *
@@ -266,7 +316,7 @@ public final class NpmMetadataUtils
    *                              If {@code false}, the {@code dominant} version documents are just put into recessive,
    *                              hence are replacing {@code recessive} same version version documents.
    */
-  private static Map<String, Object> overlay(
+  public static Map<String, Object> overlay(
       final Map<String, Object> recessive,
       final Map<String, Object> dominant,
       final boolean mergeVersionDocuments)
@@ -322,5 +372,9 @@ public final class NpmMetadataUtils
       }
     }
     return version;
+  }
+
+  public static String getLatestVersionFromPackageRoot(NestedAttributesMap pkg) {
+    return pkg.child(DIST_TAGS).get(LATEST, String.class);
   }
 }

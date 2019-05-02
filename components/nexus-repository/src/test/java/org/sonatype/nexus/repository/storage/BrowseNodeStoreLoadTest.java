@@ -18,14 +18,15 @@ import java.util.List;
 
 import org.sonatype.goodies.testsupport.TestSupport;
 import org.sonatype.goodies.testsupport.concurrent.ConcurrentRunner;
+import org.sonatype.nexus.common.app.VersionComparator;
 import org.sonatype.nexus.common.collect.NestedAttributesMap;
 import org.sonatype.nexus.common.entity.EntityHelper;
 import org.sonatype.nexus.orient.testsupport.DatabaseInstanceRule;
 import org.sonatype.nexus.repository.browse.BrowseNodeConfiguration;
 import org.sonatype.nexus.security.SecurityHelper;
-import org.sonatype.nexus.selector.CselAssetSqlBuilder;
 import org.sonatype.nexus.selector.SelectorManager;
 
+import com.google.common.collect.ImmutableMap;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import org.junit.After;
 import org.junit.Before;
@@ -68,7 +69,7 @@ public class BrowseNodeStoreLoadTest
 
   @Before
   public void setUp() throws Exception {
-    BrowseNodeConfiguration configuration = new BrowseNodeConfiguration(true, true, 1000, DELETE_PAGE_SIZE, 10_000, 10_000, seconds(0));
+    BrowseNodeConfiguration configuration = new BrowseNodeConfiguration(true, 1000, DELETE_PAGE_SIZE, 10_000, 10_000, seconds(0));
 
     BucketEntityAdapter bucketEntityAdapter = new BucketEntityAdapter();
     ComponentFactory componentFactory = new ComponentFactory(emptySet());
@@ -113,9 +114,9 @@ public class BrowseNodeStoreLoadTest
         browseNodeEntityAdapter,
         securityHelper,
         selectorManager,
-        new CselAssetSqlBuilder(),
         configuration,
-        new HashMap<>());
+        new HashMap<>(),
+        ImmutableMap.of(DefaultBrowseNodeComparator.NAME, new DefaultBrowseNodeComparator(new VersionComparator())));
 
     underTest.start();
   }

@@ -59,6 +59,15 @@ Ext.define('NX.util.Url', {
     return this.baseUrl;
   },
 
+  licenseUrl: function () {
+    var edition = NX.State.getEdition();
+    if ('EVAL' === edition || 'OSS' === edition) {
+      return NX.util.Url.urlOf('/OSS-LICENSE.html')
+    } else {
+      return NX.util.Url.urlOf('/PRO-LICENSE.html')
+    }
+  },
+
   /**
    * Creates a link.
    *
@@ -78,7 +87,7 @@ Ext.define('NX.util.Url', {
     } else {
       id = '';
     }
-    return '<a href="' + url + '" target="' + target + '"' + id + '>' + text + '</a>';
+    return '<a href="' + url + '" target="' + target + '"' + id + '>' + Ext.htmlEncode(text) + '</a>';
   },
 
   /**

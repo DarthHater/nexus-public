@@ -24,8 +24,7 @@ Ext.define('NX.coreui.view.search.SearchResultList', {
     'NX.I18n'
   ],
 
-  stateful: true,
-  stateId: 'nx-coreui-search-result-list',
+  allowClearSort: true,
 
   /**
    * @override
@@ -56,28 +55,46 @@ Ext.define('NX.coreui.view.search.SearchResultList', {
             return 'search-component';
           }
         },
-        { header: NX.I18n.get('Search_SearchResultList_Name_Header'), dataIndex: 'name', stateId: 'name', flex: 3 },
         {
-          header: NX.I18n.get('Search_SearchResultList_Group_Header'), dataIndex: 'group', stateId: 'group', flex: 4,
+          text: NX.I18n.get('Search_SearchResultList_Name_Header'),
+          dataIndex: 'name',
+          stateId: 'name',
+          flex: 3,
+          renderer: Ext.htmlEncode
+        },
+        {
+          header: NX.I18n.get('Search_SearchResultList_Group_Header'),
+          dataIndex: 'group',
+          stateId: 'group',
+          flex: 4,
           renderer: NX.ext.grid.column.Renderers.optionalData
         },
-        { header: NX.I18n.get('Search_SearchResultList_Version_Header'), dataIndex: 'version', stateId: 'version', flex: 1,
+        {
+          header: NX.I18n.get('Search_SearchResultList_Version_Header'),
+          dataIndex: 'version',
+          stateId: 'version',
+          flex: 1,
           renderer: NX.ext.grid.column.Renderers.optionalData
         },
-        { header: NX.I18n.get('Search_SearchResultList_Format_Header'), dataIndex: 'format', stateId: 'format', width: 70 },
+        {
+          header: NX.I18n.get('Search_SearchResultList_Format_Header'),
+          dataIndex: 'format',
+          stateId: 'format',
+          width: 70,
+          renderer: Ext.htmlEncode
+        },
         {
           header: NX.I18n.get('Search_SearchResultList_Repository_Header'),
           dataIndex: 'repositoryName',
           stateId: 'repositoryName',
-          hidden: true
+          hidden: true,
+          renderer: Ext.htmlEncode
         }
       ],
-      
-      plugins: {
-        ptype: 'bufferedrenderer',
-        trailingBufferZone: 20,
-        leadingBufferZone: 50
-      }
+
+      // Show all results up to the page size
+      trailingBufferZone: 300,
+      leadingBufferZone: 300
     });
 
     this.callParent();

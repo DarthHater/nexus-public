@@ -81,7 +81,6 @@ Ext.define('NX.view.SettingsForm', {
    */
   editableMarker: undefined,
 
-  autoScroll: true,
   waitMsgTarget: true,
 
   defaults: {
@@ -124,35 +123,6 @@ Ext.define('NX.view.SettingsForm', {
     }
 
     me.callParent();
-
-    me.addEvents(
-        /**
-         * Fires when a record is loaded via {@link Ext.form.Panel#loadRecord}.
-         *
-         * @event recordloaded
-         * @param {Ext.form.Panel} this form
-         * @param {Ext.data.Model} loaded record
-         */
-        'recordloaded',
-
-        /**
-         * Fires after form was loaded via configured api.
-         *
-         * @event loaded
-         * @param {Ext.form.Panel} this form
-         * @param {Ext.form.action.Action} load action
-         */
-        'loaded',
-
-        /**
-         * Fires after form was submitted via configured api.
-         *
-         * @event submitted
-         * @param {Ext.form.Panel} this form
-         * @param {Ext.form.action.Action} submit action
-         */
-        'submitted'
-    );
   },
 
   /**
@@ -163,9 +133,69 @@ Ext.define('NX.view.SettingsForm', {
   loadRecord: function (record) {
     var me = this;
 
+    me.fireEvent('beforerecordloaded', me, record);
     me.callParent(arguments);
     me.fireEvent('recordloaded', me, record);
+    me.isValid();
   },
+
+  /**
+   * Sets the read only state for all items passed in
+   *
+   * @public
+   * @param {boolean} editable
+   * @param itemsToModify
+   */
+  setItemsEditable: function (isEditable, itemsToModify) {
+    if (isEditable) {
+          Ext.Array.each(itemsToModify, function (item) {
+            var enable = true,
+                form;
+
+            if (item.resetEditable) {
+              if (Ext.isFunction(item.setReadOnly)) {
+                item.setReadOnly(false);
+              }
+              else {
+                if (Ext.isDefined(item.resetFormBind)) {
+                  item.formBind = item.resetFormBind;
+                }
+                if (item.formBind) {
+                  form = item.up('form');
+                  if (form && !form.isValid()) {
+                    enable = false;
+                  }
+                }
+                if (enable) {
+                  item.enable();
+                }
+              }
+            }
+            if (Ext.isDefined(item.resetEditable)) {
+              delete item.resetEditable;
+              delete item.resetFormBind;
+            }
+          });
+        }
+        else {
+          Ext.Array.each(itemsToModify, function (item) {
+            if (Ext.isFunction(item.setReadOnly)) {
+              if (item.resetEditable !== false && !item.readOnly) {
+                item.setReadOnly(true);
+                item.resetEditable = true;
+              }
+            }
+            else {
+              if (item.resetEditable !== false) {
+                item.disable();
+                item.resetFormBind = item.formBind;
+                delete item.formBind;
+                item.resetEditable = true;
+              }
+            }
+          });
+        }
+    },
 
   /**
    * Sets the read only state for all fields of this form.
@@ -175,57 +205,18 @@ Ext.define('NX.view.SettingsForm', {
    */
   setEditable: function (editable) {
     var me = this,
-        itemsToDisable = me.getChildItemsToDisable(),
+        itemsToDisable,
         bottomBar;
 
-    if (editable) {
-      Ext.Array.each(itemsToDisable, function (item) {
-        var enable = true,
-            form;
+    if (me.isDestroying) {
+      return;
+    }
 
-        if (item.resetEditable) {
-          if (Ext.isFunction(item.setReadOnly)) {
-            item.setReadOnly(false);
-          }
-          else {
-            if (Ext.isDefined(item.resetFormBind)) {
-              item.formBind = item.resetFormBind;
-            }
-            if (item.formBind) {
-              form = item.up('form');
-              if (form && !form.isValid()) {
-                enable = false;
-              }
-            }
-            if (enable) {
-              item.enable();
-            }
-          }
-        }
-        if (Ext.isDefined(item.resetEditable)) {
-          delete item.resetEditable;
-          delete item.resetFormBind;
-        }
-      });
-    }
-    else {
-      Ext.Array.each(itemsToDisable, function (item) {
-        if (Ext.isFunction(item.setReadOnly)) {
-          if (item.resetEditable !== false && !item.readOnly) {
-            item.setReadOnly(true);
-            item.resetEditable = true;
-          }
-        }
-        else {
-          if (item.resetEditable !== false && !item.disabled) {
-            item.disable();
-            item.resetFormBind = item.formBind;
-            delete item.formBind;
-            item.resetEditable = true;
-          }
-        }
-      });
-    }
+    itemsToDisable = me.getChildItemsToDisable().filter(function(item){
+      return item.xtype !== 'nx-coreui-formfield-settingsfieldset';
+    });
+
+    me.setItemsEditable(editable, itemsToDisable);
 
     bottomBar = me.getDockedItems('toolbar[dock="bottom"]')[0];
     if (bottomBar) {

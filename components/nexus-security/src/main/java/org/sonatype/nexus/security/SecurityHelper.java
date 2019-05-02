@@ -73,6 +73,25 @@ public class SecurityHelper
   }
 
   /**
+   * Ensure subject has any of the given permissions.
+   *
+   * @throws AuthorizationException
+   */
+  public void ensureAnyPermitted(final Subject subject, final Permission... permissions) {
+    checkNotNull(subject);
+    checkNotNull(permissions);
+    checkArgument(permissions.length != 0);
+
+    if (log.isTraceEnabled()) {
+      log.trace("Ensuring subject '{}' has any of the following permissions: {}", subject.getPrincipal(), Arrays.toString(permissions));
+    }
+
+    if (!anyPermitted(subject, permissions)) {
+      throw new AuthorizationException("User is not permitted.");
+    }
+  }
+
+  /**
    * Ensure current subject has given permissions.
    *
    * @throws AuthorizationException
@@ -150,5 +169,37 @@ public class SecurityHelper
    */
   public boolean allPermitted(final Permission... permissions) {
     return allPermitted(subject(), permissions);
+  }
+
+  /**
+   * Check which permissions the subject has.
+   *
+   * @since 3.13
+   */
+  public boolean[] isPermitted(final Subject subject, final Permission... permissions) {
+    checkNotNull(subject);
+    checkNotNull(permissions);
+    checkArgument(permissions.length != 0);
+
+    boolean trace = log.isTraceEnabled();
+    if (trace) {
+      log.trace("Checking which permissions subject '{}' has in: {}", subject.getPrincipal(),
+          Arrays.toString(permissions));
+    }
+    boolean[] results = subject.isPermitted(Arrays.asList(permissions));
+    if (trace) {
+      log.trace("Subject '{}' has permissions: [{}] results {}", subject.getPrincipal(), Arrays.toString(permissions),
+          results);
+    }
+    return results;
+  }
+
+  /**
+   * Check which permissions the current subject has.
+   *
+   * @since 3.13
+   */
+  public boolean[] isPermitted(final Permission... permissions) {
+    return isPermitted(subject(), permissions);
   }
 }

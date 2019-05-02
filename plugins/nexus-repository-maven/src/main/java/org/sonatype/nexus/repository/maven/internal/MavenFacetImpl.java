@@ -37,6 +37,7 @@ import org.sonatype.nexus.repository.maven.MavenPath.Coordinates;
 import org.sonatype.nexus.repository.maven.MavenPath.HashType;
 import org.sonatype.nexus.repository.maven.MavenPathParser;
 import org.sonatype.nexus.repository.maven.VersionPolicy;
+import org.sonatype.nexus.repository.maven.internal.validation.MavenMetadataContentValidator;
 import org.sonatype.nexus.repository.storage.Asset;
 import org.sonatype.nexus.repository.storage.AssetBlob;
 import org.sonatype.nexus.repository.storage.Bucket;
@@ -53,6 +54,7 @@ import org.sonatype.nexus.repository.types.ProxyType;
 import org.sonatype.nexus.repository.view.Content;
 import org.sonatype.nexus.repository.view.Payload;
 import org.sonatype.nexus.repository.view.payloads.BlobPayload;
+import org.sonatype.nexus.transaction.Transactional;
 import org.sonatype.nexus.transaction.UnitOfWork;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -61,6 +63,7 @@ import org.apache.maven.model.Model;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static org.sonatype.nexus.repository.maven.internal.Attributes.*;
+import static org.sonatype.nexus.repository.maven.internal.Constants.METADATA_FILENAME;
 import static org.sonatype.nexus.repository.maven.internal.MavenFacetUtils.findAsset;
 import static org.sonatype.nexus.repository.maven.internal.MavenFacetUtils.findComponent;
 import static org.sonatype.nexus.repository.storage.AssetEntityAdapter.P_ASSET_KIND;
@@ -116,9 +119,19 @@ public class MavenFacetImpl
 
   private StorageFacet storageFacet;
 
+  private final MavenMetadataContentValidator metadataValidator;
+
+  private final boolean mavenMetadataValidationEnabled;
+
   @Inject
-  public MavenFacetImpl(final Map<String, MavenPathParser> mavenPathParsers) {
+  public MavenFacetImpl(final Map<String, MavenPathParser> mavenPathParsers,
+                        final MavenMetadataContentValidator metadataValidator,
+                        @Named("${nexus.maven.metadata.validation.enabled:-true}")
+                        final boolean mavenMetadataValidationEnabled)
+  {
     this.mavenPathParsers = checkNotNull(mavenPathParsers);
+    this.metadataValidator = checkNotNull(metadataValidator);
+    this.mavenMetadataValidationEnabled = mavenMetadataValidationEnabled;
   }
 
   @Override
@@ -176,9 +189,6 @@ public class MavenFacetImpl
     if (asset == null) {
       return null;
     }
-    if (asset.markAsDownloaded()) {
-      tx.saveAsset(asset);
-    }
 
     final Blob blob = tx.requireBlob(asset.requireBlobRef());
     return toContent(asset, blob);
@@ -198,6 +208,12 @@ public class MavenFacetImpl
     log.debug("PUT {} : {}", getRepository().getName(), path.getPath());
 
     try (TempBlob tempBlob = storageFacet.createTempBlob(payload, HashType.ALGORITHMS)) {
+      if (path.getFileName().equals(METADATA_FILENAME) && mavenMetadataValidationEnabled) {
+        
+        log.debug("Validating maven-metadata.xml before storing");
+        
+        metadataValidator.validate(path.getPath(), tempBlob.get());
+      }
       return doPut(path, payload, tempBlob);
     }
   }
@@ -354,7 +370,7 @@ public class MavenFacetImpl
     }
 
     putAssetPayload(tx, asset, assetBlob, contentAttributes);
-    asset.markAsDownloaded();
+
     tx.saveAsset(asset);
 
     // avoid re-reading pom.xml if it's a duplicate of the old asset
@@ -398,6 +414,18 @@ public class MavenFacetImpl
     }
   }
 
+  @Override
+  @Transactional
+  public boolean exists(final MavenPath path) {
+    log.debug("EXISTS {} : {}", getRepository().getName(), path.getPath());
+
+    final StorageTx tx = UnitOfWork.currentTx();
+
+    final Asset asset = findAsset(tx, tx.findBucket(getRepository()), path);
+
+    return asset != null;
+  }
+
   private Asset putFile(final StorageTx tx,
       final MavenPath path,
       final AssetBlob assetBlob,
@@ -409,15 +437,11 @@ public class MavenFacetImpl
     if (asset == null) {
       asset = tx.createAsset(bucket, getRepository().getFormat());
       asset.name(path.getPath());
-      asset.formatAttributes().set(
-          P_ASSET_KIND,
-          getMavenPathParser().isRepositoryMetadata(path)
-              ? AssetKind.REPOSITORY_METADATA.name() : AssetKind.OTHER.name()
-      );
+      asset.formatAttributes().set(P_ASSET_KIND, fileAssetKindFor(path));
     }
 
     putAssetPayload(tx, asset, assetBlob, contentAttributes);
-    asset.markAsDownloaded();
+
     tx.saveAsset(asset);
 
     return asset;
@@ -474,5 +498,17 @@ public class MavenFacetImpl
     }
     tx.deleteAsset(asset);
     return true;
+  }
+
+  private String fileAssetKindFor(final MavenPath path) {
+    if (getMavenPathParser().isRepositoryMetadata(path)) {
+      return AssetKind.REPOSITORY_METADATA.name();
+    }
+    else if (getMavenPathParser().isRepositoryIndex(path)) {
+      return AssetKind.REPOSITORY_INDEX.name();
+    }
+    else {
+      return AssetKind.OTHER.name();
+    }
   }
 }

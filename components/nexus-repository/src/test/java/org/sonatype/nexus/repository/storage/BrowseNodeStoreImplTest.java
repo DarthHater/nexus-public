@@ -12,9 +12,13 @@
  */
 package org.sonatype.nexus.repository.storage;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.StreamSupport;
 
 import org.sonatype.goodies.testsupport.TestSupport;
+import org.sonatype.nexus.common.app.VersionComparator;
+import org.sonatype.nexus.common.entity.DetachedEntityId;
 import org.sonatype.nexus.common.entity.EntityId;
 import org.sonatype.nexus.orient.DatabaseInstance;
 import org.sonatype.nexus.repository.Format;
@@ -24,11 +28,14 @@ import org.sonatype.nexus.repository.group.GroupFacet;
 import org.sonatype.nexus.repository.security.RepositoryViewPermission;
 import org.sonatype.nexus.repository.types.GroupType;
 import org.sonatype.nexus.security.SecurityHelper;
-import org.sonatype.nexus.selector.CselAssetSqlBuilder;
 import org.sonatype.nexus.selector.CselSelector;
 import org.sonatype.nexus.selector.JexlSelector;
+import org.sonatype.nexus.selector.Selector;
 import org.sonatype.nexus.selector.SelectorConfiguration;
+import org.sonatype.nexus.selector.SelectorFactory;
 import org.sonatype.nexus.selector.SelectorManager;
+import org.sonatype.nexus.selector.SelectorSqlBuilder;
+import org.sonatype.nexus.validation.ConstraintViolationFactory;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -41,8 +48,10 @@ import org.mockito.Mock;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
+import static java.util.stream.Collectors.toList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.allOf;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.hasProperty;
 import static org.hamcrest.Matchers.is;
@@ -50,6 +59,8 @@ import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Matchers.anyMap;
 import static org.mockito.Matchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -153,6 +164,18 @@ public class BrowseNodeStoreImplTest
     when(byVersion.getAttributes()).thenReturn(ImmutableMap.of("expression", "coordinate.version == \"2.1\""));
     when(jexl.getType()).thenReturn(JexlSelector.TYPE);
 
+    ConstraintViolationFactory violationFactory = mock(ConstraintViolationFactory.class);
+    SelectorFactory selectorFactory = new SelectorFactory(violationFactory);
+
+    doAnswer(invocation -> {
+      SelectorConfiguration config = (SelectorConfiguration) invocation.getArguments()[0];
+      String type = config.getType();
+      String expression = config.getAttributes().get("expression");
+      Selector selector = selectorFactory.createSelector(type, expression);
+      selector.toSql((SelectorSqlBuilder) invocation.getArguments()[1]);
+      return null;
+    }).when(selectorManager).toSql(any(), any());
+
     when(browseNodeFilter.test(any(), any())).thenReturn(true);
 
     underTest = new BrowseNodeStoreImpl(
@@ -160,9 +183,9 @@ public class BrowseNodeStoreImplTest
         browseNodeEntityAdapter,
         securityHelper,
         selectorManager,
-        new CselAssetSqlBuilder(),
-        new BrowseNodeConfiguration(true, true, 1000, DELETE_PAGE_SIZE, 10_000, 10_000, seconds(0)),
-        ImmutableMap.of(FORMAT_NAME, browseNodeFilter));
+        new BrowseNodeConfiguration(true, 1000, DELETE_PAGE_SIZE, 10_000, 10_000, seconds(0)),
+        ImmutableMap.of(FORMAT_NAME, browseNodeFilter),
+        ImmutableMap.of(DefaultBrowseNodeComparator.NAME, new DefaultBrowseNodeComparator(new VersionComparator())));
 
     underTest.start();
 
@@ -266,6 +289,7 @@ public class BrowseNodeStoreImplTest
 
     verify(securityHelper).anyPermitted(any(RepositoryViewPermission.class));
     verify(selectorManager).browseActive(asList(REPOSITORY_NAME), asList(FORMAT_NAME));
+    verify(selectorManager).toSql(eq(byGroup), any());
     verify(browseNodeEntityAdapter).getByPath(db, REPOSITORY_NAME, queryPath, MAX_NODES,
         "(asset_id.attributes.test-format.groupId = :s0p0)", ImmutableMap.of("s0p0", "org.sonatype"));
     verifyNoMoreInteractions(browseNodeEntityAdapter, securityHelper, selectorManager);
@@ -282,6 +306,7 @@ public class BrowseNodeStoreImplTest
 
     verify(securityHelper).anyPermitted(any(RepositoryViewPermission.class));
     verify(selectorManager).browseActive(asList(REPOSITORY_NAME), asList(FORMAT_NAME));
+    verify(selectorManager).toSql(eq(byGroup), any());
     verify(browseNodeEntityAdapter).getByPath(db, REPOSITORY_NAME, queryPath, MAX_NODES,
         "asset_name_lowercase like :keyword_filter and (asset_id.attributes.test-format.groupId = :s0p0)",
         ImmutableMap.of("keyword_filter", "%wibble%", "s0p0", "org.sonatype"));
@@ -300,6 +325,8 @@ public class BrowseNodeStoreImplTest
 
     verify(securityHelper).anyPermitted(any(RepositoryViewPermission.class));
     verify(selectorManager).browseActive(asList(REPOSITORY_NAME), asList(FORMAT_NAME));
+    verify(selectorManager).toSql(eq(byGroup), any());
+    verify(selectorManager).toSql(eq(byVersion), any());
     verify(browseNodeEntityAdapter).getByPath(db, REPOSITORY_NAME, queryPath, MAX_NODES,
         "((asset_id.attributes.test-format.groupId = :s0p0) or (asset_id.attributes.test-format.version = :s1p0))",
         ImmutableMap.of("s0p0", "org.sonatype", "s1p0", "2.1"));
@@ -318,6 +345,8 @@ public class BrowseNodeStoreImplTest
 
     verify(securityHelper).anyPermitted(any(RepositoryViewPermission.class));
     verify(selectorManager).browseActive(asList(REPOSITORY_NAME), asList(FORMAT_NAME));
+    verify(selectorManager).toSql(eq(byGroup), any());
+    verify(selectorManager).toSql(eq(byVersion), any());
     verify(browseNodeEntityAdapter).getByPath(db, REPOSITORY_NAME, queryPath, MAX_NODES,
         "asset_name_lowercase like :keyword_filter and"
             + " ((asset_id.attributes.test-format.groupId = :s0p0) or (asset_id.attributes.test-format.version = :s1p0))",
@@ -337,6 +366,8 @@ public class BrowseNodeStoreImplTest
 
     verify(securityHelper).anyPermitted(any(RepositoryViewPermission.class));
     verify(selectorManager).browseActive(asList(REPOSITORY_NAME), asList(FORMAT_NAME));
+    verify(selectorManager).toSql(eq(byGroup), any());
+    verify(selectorManager).toSql(eq(byVersion), any());
     verify(browseNodeEntityAdapter).getByPath(db, REPOSITORY_NAME, queryPath, MAX_NODES,
         "((asset_id.attributes.test-format.groupId = :s0p0) or (asset_id.attributes.test-format.version = :s1p0)"
             + " or contentAuth(@this.asset_id, :authz_repository_name, true) = true)",
@@ -356,6 +387,8 @@ public class BrowseNodeStoreImplTest
 
     verify(securityHelper).anyPermitted(any(RepositoryViewPermission.class));
     verify(selectorManager).browseActive(asList(REPOSITORY_NAME), asList(FORMAT_NAME));
+    verify(selectorManager).toSql(eq(byGroup), any());
+    verify(selectorManager).toSql(eq(byVersion), any());
     verify(browseNodeEntityAdapter).getByPath(db, REPOSITORY_NAME, queryPath, MAX_NODES,
         "asset_name_lowercase like :keyword_filter and"
             + " ((asset_id.attributes.test-format.groupId = :s0p0) or (asset_id.attributes.test-format.version = :s1p0)"
@@ -486,11 +519,102 @@ public class BrowseNodeStoreImplTest
     verify(browseNodeFilter).test(any(), eq(REPOSITORY_NAME));
   }
 
+  @Test
+  public void defaultSortingOfComponents() throws Exception {
+    when(securityHelper.anyPermitted(any())).thenReturn(true);
+    when(browseNodeEntityAdapter.getByPath(any(), any(), any(), anyInt(), any(), anyMap())).thenReturn(Arrays
+        .asList(
+            node("1.0", false, true),
+            node("2.0", false, true),
+            node("1.1", false, true),
+            node("1.10", false, true),
+            node("1.2", false, true)));
+
+    assertThat(versions(asList("org", "foo")), contains("1.0", "1.1", "1.2", "1.10", "2.0"));
+  }
+
+  @Test
+  public void defaultSortingOfAssets() throws Exception {
+    when(securityHelper.anyPermitted(any())).thenReturn(true);
+    //this test is for asset sorting, but i've left version numbers here so we validate version sorter is _not_ used
+    when(browseNodeEntityAdapter.getByPath(any(), any(), any(), anyInt(), any(), anyMap())).thenReturn(Arrays
+        .asList(
+            node("1.0", true, false),
+            node("2.0", true, false),
+            node("1.1", true, false),
+            node("1.10", true, false),
+            node("1.2", true, false)));
+
+    assertThat(versions(asList("org", "foo")), contains("1.0", "1.1", "1.10", "1.2", "2.0"));
+  }
+
+  @Test
+  public void defaultSortingOfFolders() throws Exception {
+    when(securityHelper.anyPermitted(any())).thenReturn(true);
+    //this test is for folder sorting, but i've left version numbers here so we validate version sorter is _not_ used
+    when(browseNodeEntityAdapter.getByPath(any(), any(), any(), anyInt(), any(), anyMap())).thenReturn(Arrays
+        .asList(
+            node("1.0", false, false),
+            node("2.0", false, false),
+            node("1.1", true, false),
+            node("1.10", false, true),
+            node("1.2", false, false)));
+
+    assertThat(versions(asList("org", "foo")), contains("1.10", "1.0", "1.2", "2.0", "1.1"));
+  }
+
+  @Test
+  public void alternateSorting() throws Exception {
+    underTest = new BrowseNodeStoreImpl(
+        () -> databaseInstance,
+        browseNodeEntityAdapter,
+        securityHelper,
+        selectorManager,
+        new BrowseNodeConfiguration(true, 1000, DELETE_PAGE_SIZE, 10_000, 10_000, seconds(0)),
+        ImmutableMap.of(FORMAT_NAME, browseNodeFilter),
+        ImmutableMap.of(DefaultBrowseNodeComparator.NAME, new DefaultBrowseNodeComparator(new VersionComparator()), FORMAT_NAME, new TestComparator()));
+
+    when(securityHelper.anyPermitted(any())).thenReturn(true);
+    when(browseNodeEntityAdapter.getByPath(any(), any(), any(), anyInt(), any(), anyMap())).thenReturn(Arrays
+        .asList(
+            node("1.0", false, false),
+            node("2.0", true, false),
+            node("1.1", false, false),
+            node("1.10", false, true),
+            node("1.2", false, false)));
+
+    assertThat(versions(asList("org", "foo")), contains("2.0", "1.2", "1.10", "1.1", "1.0"));
+  }
+
+  private List<String> versions(List<String> queryPath) {
+    return StreamSupport.stream(underTest.getByPath(repository, queryPath, MAX_NODES, null).spliterator(), false)
+        .map(BrowseNode::getName).collect(toList());
+  }
+
   private static BrowseNode node(final String repositoryName, final String name) {
     BrowseNode node = new BrowseNode();
     node.setRepositoryName(repositoryName);
     node.setParentPath("/");
     node.setName(name);
     return node;
+  }
+
+  private static BrowseNode node(final String name, final boolean isAsset, final boolean isComponent ) {
+    BrowseNode node = new BrowseNode();
+    node.setName(name);
+    if (isAsset) {
+      node.setAssetId(new DetachedEntityId(name));
+    }
+    if (isComponent) {
+      node.setComponentId(new DetachedEntityId(name + "c"));
+    }
+    return node;
+  }
+
+  private final class TestComparator implements BrowseNodeComparator {
+    @Override
+    public int compare(BrowseNode o1, BrowseNode o2) {
+      return 0 - o1.getName().compareToIgnoreCase(o2.getName());
+    }
   }
 }

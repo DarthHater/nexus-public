@@ -27,6 +27,7 @@ import javax.servlet.ServletContext;
 import javax.servlet.ServletContextEvent;
 import javax.servlet.ServletContextListener;
 
+import org.sonatype.nexus.common.app.ManagedLifecycle.Phase;
 import org.sonatype.nexus.common.app.ManagedLifecycleManager;
 
 import com.codahale.metrics.SharedMetricRegistries;
@@ -36,12 +37,12 @@ import com.google.common.base.Throwables;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import com.google.inject.Module;
 import com.google.inject.Provider;
 import com.google.inject.servlet.GuiceFilter;
 import org.apache.karaf.features.Feature;
 import org.apache.karaf.features.FeaturesService;
 import org.apache.karaf.features.FeaturesService.Option;
-import org.eclipse.sisu.bean.BeanManager;
 import org.eclipse.sisu.inject.BeanLocator;
 import org.eclipse.sisu.wire.ParameterKeys;
 import org.eclipse.sisu.wire.WireModule;
@@ -69,6 +70,7 @@ import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.KERNEL;
 import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.OFF;
 import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.SECURITY;
 import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.TASKS;
+import static org.sonatype.nexus.common.text.Strings2.isEmpty;
 
 /**
  * {@link ServletContextListener} that bootstraps the core Nexus application.
@@ -88,6 +90,12 @@ public class NexusContextListener
    * Start-level at which point any additional Nexus plugins/features should be available.
    */
   public static final int NEXUS_PLUGIN_START_LEVEL = 200;
+
+  private static final String NEXUS_LIFECYCLE_STARTUP_PHASE = "nexus.lifecycle.startupPhase";
+
+  private static final String NEXUS_FULL_EDITION = "nexus-full-edition";
+
+  private static final String UNKNOWN = "unknown";
 
   static {
     boolean hasPaxExam;
@@ -121,6 +129,8 @@ public class NexusContextListener
 
   private ServiceRegistration<Filter> registration;
 
+  private Phase startupPhase;
+
   public NexusContextListener(final NexusBundleExtender extender) {
     this.extender = checkNotNull(extender);
   }
@@ -150,7 +160,8 @@ public class NexusContextListener
     try {
       lifecycleManager = injector.getInstance(ManagedLifecycleManager.class);
 
-      lifecycleManager.to(KERNEL);
+      checkStartupPhase();
+      moveToPhase(KERNEL);
 
       // assign higher start level to any bundles installed after this point to hold back activation
       bundleContext.addBundleListener((SynchronousBundleListener) (e) -> {
@@ -166,7 +177,7 @@ public class NexusContextListener
       }
       // otherwise just activate security and register the filter to support install/upgrade wizard
       else {
-        lifecycleManager.to(SECURITY);
+        moveToPhase(SECURITY);
         registerNexusFilter();
       }
     }
@@ -185,10 +196,12 @@ public class NexusContextListener
     if (event.getType() == FrameworkEvent.STARTLEVEL_CHANGED) {
       // feature bundles have all been activated at this point
 
+      boolean continueStartup = true;
       try {
-        lifecycleManager.to(CAPABILITIES);
+        moveToPhase(CAPABILITIES);
       }
       catch (final Exception e) {
+        continueStartup = false;
         log.error("Failed to start nexus", e);
         if (!HAS_PAX_EXAM) {
           try {
@@ -209,11 +222,13 @@ public class NexusContextListener
         registerLocatorWithPaxExam(injector.getProvider(BeanLocator.class));
       }
 
-      try {
-        lifecycleManager.to(TASKS);
-      }
-      catch (final Exception e) {
-        log.warn("Scheduler did not start", e);
+      if (continueStartup) {
+        try {
+          moveToPhase(TASKS);
+        }
+        catch (final Exception e) {
+          log.warn("Scheduler did not start", e);
+        }
       }
     }
   }
@@ -230,15 +245,11 @@ public class NexusContextListener
 
     // log uptime before triggering activity which may run into problems
     long uptime = ManagementFactory.getRuntimeMXBean().getUptime();
-    log.info("Uptime: {}", PeriodFormat.getDefault().print(new Period(uptime)));
+    log.info("Uptime: {} ({})", PeriodFormat.getDefault().print(new Period(uptime)),
+        System.getProperty(NEXUS_FULL_EDITION, UNKNOWN));
 
     try {
-      lifecycleManager.to(KERNEL);
-
-      // dispose of JSR-250 components before logging goes
-      injector.getInstance(BeanManager.class).unmanage();
-
-      lifecycleManager.to(OFF);
+      moveToPhase(OFF);
     }
     catch (final Exception e) {
       log.error("Failed to stop nexus", e);
@@ -258,6 +269,40 @@ public class NexusContextListener
   public Injector getInjector() {
     checkState(injector != null, "Missing injector reference");
     return injector;
+  }
+
+  /**
+   * Checks whether we should limit application startup to a particular lifecycle phase.
+   */
+  private void checkStartupPhase() {
+    String startupPhaseValue = (String) nexusProperties.get(NEXUS_LIFECYCLE_STARTUP_PHASE);
+    if (!isEmpty(startupPhaseValue)) {
+      try {
+        startupPhase = Phase.valueOf(startupPhaseValue);
+        log.info("Running lifecycle phases {}", EnumSet.range(KERNEL, startupPhase));
+      }
+      catch (IllegalArgumentException e) {
+        log.error("Unknown value for {}: {}", NEXUS_LIFECYCLE_STARTUP_PHASE, startupPhaseValue);
+        throw e;
+      }
+    }
+    else {
+      log.info("Running lifecycle phases {}", EnumSet.complementOf(EnumSet.of(OFF)));
+    }
+  }
+
+  /**
+   * Moves the application lifecycle on to a new phase.
+   *
+   * When {@link #startupPhase} is set startup will never go past that phase.
+   */
+  private void moveToPhase(final Phase phase) throws Exception {
+    if (startupPhase != null && phase.ordinal() > startupPhase.ordinal()) {
+      lifecycleManager.to(startupPhase); // this far, no further
+    }
+    else {
+      lifecycleManager.to(phase);
+    }
   }
 
   /**
@@ -326,7 +371,7 @@ public class NexusContextListener
     {
       @Override
       public void injectFields(final Object target) {
-        Guice.createInjector(new WireModule(new AbstractModule()
+        Module testModule = new WireModule(new AbstractModule()
         {
           @Override
           protected void configure() {
@@ -341,7 +386,15 @@ public class NexusContextListener
             // inject the test-instance
             requestInjection(target);
           }
-        }));
+        });
+
+        // lock locator to avoid a potential concurrency issue while injecting the target
+        // (just in case there was a startup problem that left things in an odd state and
+        // a Jetty thread is now trying to initialize the same singletons via the filter)
+        // - locking the locator holds back dynamic injection while we populate the test
+        synchronized (locatorProvider.get()) {
+          Guice.createInjector(testModule);
+        }
       }
     }, examProperties);
   }

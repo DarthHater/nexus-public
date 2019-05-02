@@ -37,8 +37,8 @@ Ext.define('NX.coreui.view.ssl.SslCertificateFeature', {
 
       tabs: { xtype: 'nx-coreui-sslcertificate-details' },
 
-      actions: [
-        { xtype: 'button', text: NX.I18n.get('Ssl_SslCertificateFeature_Delete_Button'), glyph: 'xf056@FontAwesome' /* fa-minus-circle */, action: 'delete', disabled: true }
+      nxActions: [
+        { xtype: 'button', text: NX.I18n.get('Ssl_SslCertificateFeature_Delete_Button'), glyph: 'xf1f8@FontAwesome' /* fa-trash */, action: 'delete', disabled: true }
       ]
     });
 

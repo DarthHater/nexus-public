@@ -48,7 +48,8 @@ Ext.define('NX.coreui.view.logging.LoggerList', {
           dataIndex: 'name',
           stateId: 'name',
           hideable: false,
-          flex: 1
+          flex: 1,
+          renderer: Ext.htmlEncode
         },
         {
           header: NX.I18n.get('Logging_LoggerList_Level_Header'),
@@ -91,7 +92,7 @@ Ext.define('NX.coreui.view.logging.LoggerList', {
             {
               xtype: 'button',
               text: NX.I18n.get('Logging_LoggerList_Delete_Button'),
-              glyph: 'xf056@FontAwesome' /* fa-minus-circle */,
+              glyph: 'xf1f8@FontAwesome' /* fa-trash */,
               action: 'delete',
               disabled: true
             },
@@ -107,10 +108,15 @@ Ext.define('NX.coreui.view.logging.LoggerList', {
         }
       ],
 
-      plugins: [
-        {pluginId: 'editor', ptype: 'rowediting', clicksToEdit: 1, errorSummary: false},
-        {ptype: 'gridfilterbox', emptyText: NX.I18n.get('Logging_LoggerList_Filter_EmptyText')}
-      ]
+      plugins: [{
+        pluginId: 'editor',
+        ptype: 'rowediting',
+        clicksToEdit: 1,
+        errorSummary: false
+      }, {
+        ptype: 'gridfilterbox',
+        emptyText: NX.I18n.get('Logging_LoggerList_Filter_EmptyText')
+      }]
     });
 
     this.callParent();

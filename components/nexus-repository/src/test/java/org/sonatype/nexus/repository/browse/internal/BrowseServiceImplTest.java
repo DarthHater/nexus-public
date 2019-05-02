@@ -18,17 +18,20 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.sonatype.goodies.testsupport.TestSupport;
 import org.sonatype.nexus.common.entity.DetachedEntityId;
 import org.sonatype.nexus.common.entity.EntityId;
 import org.sonatype.nexus.repository.Repository;
-import org.sonatype.nexus.repository.assetdownloadcount.AssetDownloadCountStore;
 import org.sonatype.nexus.repository.browse.BrowseResult;
 import org.sonatype.nexus.repository.browse.QueryOptions;
 import org.sonatype.nexus.repository.group.GroupFacet;
+import org.sonatype.nexus.repository.manager.RepositoryManager;
 import org.sonatype.nexus.repository.security.ContentPermissionChecker;
 import org.sonatype.nexus.repository.security.RepositorySelector;
+import org.sonatype.nexus.repository.security.VariableResolverAdapter;
 import org.sonatype.nexus.repository.security.VariableResolverAdapterManager;
 import org.sonatype.nexus.repository.storage.Asset;
 import org.sonatype.nexus.repository.storage.AssetEntityAdapter;
@@ -41,6 +44,9 @@ import org.sonatype.nexus.repository.storage.StorageTx;
 import org.sonatype.nexus.repository.types.GroupType;
 import org.sonatype.nexus.repository.types.HostedType;
 import org.sonatype.nexus.repository.types.ProxyType;
+import org.sonatype.nexus.selector.ConstantVariableResolver;
+import org.sonatype.nexus.selector.VariableSource;
+import org.sonatype.nexus.selector.VariableSourceBuilder;
 
 import com.google.common.base.Supplier;
 import com.orientechnologies.orient.core.id.ORID;
@@ -51,9 +57,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 
+import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertNull;
@@ -120,9 +126,6 @@ public class BrowseServiceImplTest
   AssetEntityAdapter assetEntityAdapter;
 
   @Mock
-  AssetDownloadCountStore assetDownloadCountStore;
-
-  @Mock
   BucketStore bucketStore;
 
   @Mock
@@ -130,6 +133,12 @@ public class BrowseServiceImplTest
 
   @Mock
   GroupFacet groupFacet;
+
+  @Mock
+  RepositoryManager repositoryManager;
+
+  @Mock
+  BrowseAssetIterableFactory browseAssetIterableFactory;
 
   BrowseAssetsSqlBuilder browseAssetsSqlBuilder;
 
@@ -158,7 +167,8 @@ public class BrowseServiceImplTest
     browseComponentsSqlBuilder = new BrowseComponentsSqlBuilder(componentEntityAdapter);
 
     underTest = spy(new BrowseServiceImpl(new GroupType(), componentEntityAdapter, variableResolverAdapterManager,
-        contentPermissionChecker, assetDownloadCountStore, assetEntityAdapter, browseAssetsSqlBuilder, browseComponentsSqlBuilder, bucketStore));
+        contentPermissionChecker, assetEntityAdapter, browseAssetIterableFactory, browseAssetsSqlBuilder,
+        browseComponentsSqlBuilder, bucketStore, repositoryManager));
   }
 
   @Test
@@ -188,31 +198,22 @@ public class BrowseServiceImplTest
     assertThat(repoToContainedGroups.get("group").get(0), is("group"));
   }
 
-  @Captor
-  ArgumentCaptor<Map<String, Object>> sqlParamsCaptor;
-
   @Test
   public void testBrowseAssets() {
     List<Repository> expectedRepositories = asList(mavenReleases);
     String expectedQuery1 = "SELECT FROM INDEXVALUES:asset_name_ci_idx WHERE (bucket = b4)  SKIP 0 LIMIT 1";
-    String expectedQuery2 = "SELECT FROM INDEXVALUES:asset_name_ci_idx WHERE (bucket = b4) AND contentAuth(@this, :browsedRepository) == true  SKIP 0 LIMIT 0";
     List<String> bucketIds = Collections.singletonList("b4");
     Iterable<ODocument> resultDocs = asList(mock(ODocument.class), mock(ODocument.class));
 
     doReturn(bucketIds).when(underTest).getBucketIds(any(), eq(expectedRepositories));
     doReturn(results).when(underTest).getAssets(resultDocs);
     when(storageTx.browse(eq(expectedQuery1), any())).thenReturn(resultDocs);
-    when(storageTx.browse(eq(expectedQuery2), sqlParamsCaptor.capture())).thenReturn(resultDocs);
+    when(queryOptions.getLimit()).thenReturn(10);
+    when(browseAssetIterableFactory.create(any(), any(), any(), any(), eq(10))).thenReturn(resultDocs);
 
     BrowseResult<Asset> browseResult = underTest.browseAssets(mavenReleases, queryOptions);
     assertThat(browseResult.getTotal(), is(2L));
     assertThat(browseResult.getResults(), is(results));
-
-    sqlParamsCaptor.getAllValues().stream().forEach(params -> {
-      String repoNames = params.get("browsedRepository").toString();
-      List<String> splitNames = Arrays.asList(repoNames.split(","));
-      assertThat(splitNames, contains("releases"));
-    });
   }
 
   @Test
@@ -314,7 +315,8 @@ public class BrowseServiceImplTest
 
   @Test
   public void testGetAssetById() {
-    String expectedSql = "SELECT * FROM asset WHERE contentAuth(@this, :browsedRepository) == true AND @RID == :rid";
+    String expectedSql =
+        format("SELECT FROM %s WHERE contentAuth(@this, :browsedRepository) == true", assetOneORID);
 
     when(storageTx.browse(eq(expectedSql), paramsCaptor.capture())).thenReturn(Collections.singletonList(assetOneDoc));
 
@@ -325,7 +327,6 @@ public class BrowseServiceImplTest
     Map<String, Object> params = paramsCaptor.getValue();
 
     assertThat(params.get("browsedRepository"), is("releases"));
-    assertThat(params.get("rid"), is("assetOne"));
   }
 
   @Test
@@ -387,7 +388,8 @@ public class BrowseServiceImplTest
 
   @Test
   public void testGetAssetById_NoResultsIsNull() {
-    String expectedSql = "SELECT * FROM asset WHERE contentAuth(@this, :browsedRepository) == true AND @RID == :rid";
+    String expectedSql =
+        format("SELECT FROM %s WHERE contentAuth(@this, :browsedRepository) == true", assetOneORID);
 
     when(storageTx.browse(eq(expectedSql), paramsCaptor.capture())).thenReturn(Collections.emptyList());
 
@@ -396,12 +398,12 @@ public class BrowseServiceImplTest
     Map<String, Object> params = paramsCaptor.getValue();
 
     assertThat(params.get("browsedRepository"), is("releases"));
-    assertThat(params.get("rid"), is("assetOne"));
   }
 
   @Test
   public void testGetComponentById() {
-    String expectedSql = "SELECT * FROM component WHERE contentAuth(@this, :browsedRepository) == true AND @RID == :rid";
+    String expectedSql =
+        format("SELECT FROM %s WHERE contentAuth(@this, :browsedRepository) == true", componentOneORID);
 
     when(storageTx.browse(eq(expectedSql), paramsCaptor.capture()))
         .thenReturn(Collections.singletonList(componentOneDoc));
@@ -413,12 +415,12 @@ public class BrowseServiceImplTest
     Map<String, Object> params = paramsCaptor.getValue();
 
     assertThat(params.get("browsedRepository"), is("releases"));
-    assertThat(params.get("rid"), is("componentOne"));
   }
 
   @Test
   public void testGetComponentById_NoResultsIsNull() {
-    String expectedSql = "SELECT * FROM component WHERE contentAuth(@this, :browsedRepository) == true AND @RID == :rid";
+    String expectedSql =
+        format("SELECT FROM %s WHERE contentAuth(@this, :browsedRepository) == true", componentOneORID);
 
     when(storageTx.browse(eq(expectedSql), paramsCaptor.capture())).thenReturn(Collections.emptyList());
 
@@ -427,25 +429,62 @@ public class BrowseServiceImplTest
     Map<String, Object> params = paramsCaptor.getValue();
 
     assertThat(params.get("browsedRepository"), is("releases"));
-    assertThat(params.get("rid"), is("componentOne"));
   }
 
   @Test
-  public void testGetLastThirtyDays() {
-    Bucket bucket = mock(Bucket.class);
-    EntityId bucketId = mock(EntityId.class);
-    when(assetOne.name()).thenReturn("/foo/one");
-    when(assetOne.bucketId()).thenReturn(bucketId);
-    when(bucketStore.getById(bucketId)).thenReturn(bucket);
-    when(bucket.getRepositoryName()).thenReturn("last-thirty-repo");
-    when(assetDownloadCountStore.getLastThirtyDays("last-thirty-repo", "/foo/one")).thenReturn(99L);
-    when(assetDownloadCountStore.isEnabled()).thenReturn(true);
+  public void testBrowseComponentAssets_all_authorized() {
+    setupMocksForBrowserComponentAssets(true, true);
+    BrowseResult<Asset> results = underTest.browseComponentAssets(mavenReleases, "componentOne");
 
-    assertThat(underTest.getLastThirtyDays(assetOne), is(99L));
+    assertThat(results.getTotal(), is(2l));
+    assertThat(results.getResults().get(0).name(), is(assetOne.name()));
+    assertThat(results.getResults().get(1).name(), is(assetTwo.name()));
+  }
 
-    when(assetDownloadCountStore.isEnabled()).thenReturn(false);
+  @Test
+  public void testBrowseComponentAssets_not_all_authorized() {
+    setupMocksForBrowserComponentAssets(false, true);
+    BrowseResult<Asset> results = underTest.browseComponentAssets(mavenReleases, "componentOne");
 
-    assertThat(underTest.getLastThirtyDays(assetOne), is(0L));
+    assertThat(results.getTotal(), is(1l));
+    assertThat(results.getResults().get(0).name(), is(assetTwo.name()));
+  }
 
+  @Test
+  public void testBrowseComponentAssets_none_authorized() {
+    setupMocksForBrowserComponentAssets(false, false);
+    BrowseResult<Asset> results = underTest.browseComponentAssets(mavenReleases, "componentOne");
+
+    assertThat(results.getTotal(), is(0l));
+  }
+
+  private void setupMocksForBrowserComponentAssets(boolean allowAssetOne, boolean allowAssetTwo) {
+    Repository groupRepository = mock(Repository.class);
+    when(groupRepository.getType()).thenReturn(new GroupType());
+    when(groupRepository.getName()).thenReturn("group-repository");
+    when(groupRepository.facet(StorageFacet.class)).thenReturn(storageFacet);
+    GroupFacet groupFacet = mock(GroupFacet.class);
+    when(groupFacet.allMembers()).thenReturn(Arrays.asList(groupRepository, mavenReleases));
+    when(groupRepository.facet(GroupFacet.class)).thenReturn(groupFacet);
+    when(storageTx.findComponent(new DetachedEntityId(componentOneORID.toString()))).thenReturn(componentOne);
+    when(repositoryManager.findContainingGroups(mavenReleases.getName())).thenReturn(Collections.singletonList("group-repository"));
+    VariableResolverAdapter variableResolverAdapter = mock(VariableResolverAdapter.class);
+    when(variableResolverAdapterManager.get(componentOne.format())).thenReturn(variableResolverAdapter);
+    VariableSource variableSourceOne = createVariableSource(assetOne);
+    VariableSource variableSourceTwo = createVariableSource(assetTwo);
+    when(variableResolverAdapter.fromAsset(assetOne)).thenReturn(variableSourceOne);
+    when(variableResolverAdapter.fromAsset(assetTwo)).thenReturn(variableSourceTwo);
+    when(storageTx.browseAssets(componentOne)).thenReturn(Arrays.asList(assetOne, assetTwo));
+    when(contentPermissionChecker
+        .isPermitted(eq(Stream.of(mavenReleases.getName(), "group-repository").collect(Collectors.toSet())), any(),
+            any(), eq(variableSourceOne))).thenReturn(allowAssetOne);
+    when(contentPermissionChecker
+        .isPermitted(eq(Stream.of(mavenReleases.getName(), "group-repository").collect(Collectors.toSet())), any(),
+            any(), eq(variableSourceTwo))).thenReturn(allowAssetTwo);
+  }
+
+  private VariableSource createVariableSource(Asset asset) {
+    return new VariableSourceBuilder().addResolver(new ConstantVariableResolver('/' + asset.name(), "path"))
+        .addResolver(new ConstantVariableResolver(asset.format(), "format")).build();
   }
 }

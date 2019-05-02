@@ -101,6 +101,13 @@ public interface BlobStore
   Blob create(InputStream blobData, Map<String, String> headers);
 
   /**
+   * Creates a new blob with the provided {@link BlobId}.
+   *
+   * @since 3.15
+   */
+  Blob create(InputStream blobData, Map<String, String> headers, @Nullable BlobId blobId);
+
+  /**
    * Imports a blob by creating a hard link, throwing {@link BlobStoreException} if that's not supported
    * from the source file's location.
    *
@@ -134,6 +141,14 @@ public interface BlobStore
   Blob get(BlobId blobId, boolean includeDeleted);
 
   /**
+   * Performs a simple existence check using the attributes path returning {@code true} if it exists and
+   * {@code false} if it does not.
+   *
+   * This was introduced to allow existence checking of direct-path blobs in support of edge cases such as RHC.
+   */
+  boolean exists(BlobId blobId);
+
+  /**
    * Removes a blob from the blob store.  This may not immediately delete the blob from the underlying storage
    * mechanism, but will make it immediately unavailable to future calls to {@link BlobStore#get(BlobId)}.
    *
@@ -150,7 +165,7 @@ public interface BlobStore
   boolean deleteHard(BlobId blobId);
 
   /**
-   * Provides metrics about the BlobStore's usage.
+   * Provides an immutable snapshot of metrics about the BlobStore's usage.
    */
   BlobStoreMetrics getMetrics();
 
@@ -204,4 +219,47 @@ public interface BlobStore
    * @since 3.7
    */
   void setBlobAttributes(BlobId blobId, BlobAttributes blobAttributes);
+
+  /**
+   * Undeletes a soft deleted blob, if possible.
+   *
+   * @return {@code true} if the blob has been successfully undeleted.
+   * @since 3.12
+   */
+  boolean undelete(@Nullable BlobStoreUsageChecker inUseChecker, BlobId blobId, BlobAttributes attributes, boolean isDryRun);
+
+  /**
+   * Identifies if the storage backed by the instance is available to be written to
+   * @return {@code true} if the blob store can be written to
+   * @since 3.14
+   */
+  boolean isStorageAvailable();
+
+  /**
+   * Identifies if the instance can be a member of a group
+   *
+   * @return {@code true} if the blob store can be a member of a group
+   * @since 3.14
+   */
+  default boolean isGroupable() { return true; }
+
+  /**
+   * Identifies if the instance is writable. The writable state is a configuration option and not representative of the
+   * underlying storage implementation. To communicate the underlying implementations status see
+   * {@link #isStorageAvailable()}
+   *
+   * @return {@code true} if the blob store is writable
+   * @since 3.15
+   */
+  default boolean isWritable() {
+    return getBlobStoreConfiguration().isWritable();
+  }
+
+  /**
+   * Returns true if the blobstore has been started.
+   *
+   * @return {@code true} if the blobstore has been started.
+   * @since 3.15
+   */
+  boolean isStarted();
 }

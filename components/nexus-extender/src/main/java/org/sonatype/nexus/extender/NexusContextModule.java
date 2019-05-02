@@ -53,8 +53,9 @@ public class NexusContextModule
 
   private final Map<?, ?> nexusProperties;
 
-  public NexusContextModule(final BundleContext bundleContext, final ServletContext servletContext,
-      final Map<?, ?> nexusProperties)
+  public NexusContextModule(final BundleContext bundleContext,
+                            final ServletContext servletContext,
+                            final Map<?, ?> nexusProperties)
   {
     this.bundleContext = checkNotNull(bundleContext);
     this.servletContext = checkNotNull(servletContext);
@@ -68,8 +69,6 @@ public class NexusContextModule
     requireBinding(GuiceFilter.class);
     requireBinding(BeanManager.class);
 
-    bind(ManagedLifecycleManager.class).to(NexusLifecycleManager.class);
-
     bind(ServletContext.class).toInstance(servletContext);
     bind(ParameterKeys.PROPERTIES).toInstance(nexusProperties);
 
@@ -82,5 +81,7 @@ public class NexusContextModule
     final MutableBeanLocator locator = new DefaultBeanLocator();
     locator.add(new ServiceBindings(bundleContext, ALLOW_SERVICES, IGNORE_SERVICES, Integer.MIN_VALUE));
     bind(MutableBeanLocator.class).toInstance(locator);
+
+    bind(ManagedLifecycleManager.class).toInstance(new NexusLifecycleManager(locator, bundleContext.getBundle(0)));
   }
 }

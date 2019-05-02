@@ -79,6 +79,18 @@ public class SettingsCapabilityDescriptor
     )
     String sessionTimeoutHelp();
 
+    @DefaultMessage("Standard request timeout")
+    String requestTimeoutLabel();
+
+    @DefaultMessage("Period of time to keep the connection alive for requests expected to take a normal period of time (seconds)")
+    String requestTimeoutHelp();
+
+    @DefaultMessage("Extended request timeout")
+    String longRequestTimeoutLabel();
+
+    @DefaultMessage("Period of time to keep the connection alive for requests expected to take an extended period of time (seconds)")
+    String longRequestTimeoutHelp();
+
     @DefaultMessage("Title")
     String titleLabel();
 
@@ -121,7 +133,21 @@ public class SettingsCapabilityDescriptor
             messages.sessionTimeoutLabel(),
             messages.sessionTimeoutHelp(),
             FormField.MANDATORY
-        ).withInitialValue(RaptureSettings.DEFAULT_SESSION_TIMEOUT)
+        ).withInitialValue(RaptureSettings.DEFAULT_SESSION_TIMEOUT),
+        new NumberTextFormField(
+            SettingsCapabilityConfiguration.REQUEST_TIMEOUT,
+            messages.requestTimeoutLabel(),
+            messages.requestTimeoutHelp(),
+            FormField.MANDATORY
+        ).withInitialValue(RaptureSettings.DEFAULT_REQUEST_TIMEOUT)
+            .withMinimumValue(RaptureSettings.MIN_REQUEST_TIMEOUT),
+        new NumberTextFormField(
+            SettingsCapabilityConfiguration.LONG_REQUEST_TIMEOUT,
+            messages.longRequestTimeoutLabel(),
+            messages.longRequestTimeoutHelp(),
+            FormField.MANDATORY
+        ).withInitialValue(RaptureSettings.DEFAULT_LONG_REQUEST_TIMEOUT)
+            .withMinimumValue(RaptureSettings.DEFAULT_LONG_REQUEST_TIMEOUT)
     );
   }
 

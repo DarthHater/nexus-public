@@ -152,7 +152,8 @@ public class QuartzTaskJob
         }
       }
       catch (TaskInterruptedException e) {
-        log.debug("Task {} : {} canceled", config.getId(), config.getTaskLogName(), e);
+        log.info("Task {} : {} canceled, exception: {}", config.getId(), config.getTaskLogName(),
+            e.getMessage(), log.isDebugEnabled() ? e : null);
 
         // cancel task if not already canceled when interrupted
         QuartzTaskFuture future = taskInfo.getTaskFuture();
@@ -162,7 +163,8 @@ public class QuartzTaskJob
         }
       }
       catch (InterruptedException e) {
-        log.debug("Task {} : {} interrupted", config.getId(), config.getTaskLogName(), e);
+        log.info("Task {} : {} interrupted, exception: {}", config.getId(), config.getTaskLogName(),
+            e.getMessage(), log.isDebugEnabled() ? e : null);
 
         // non-cancelable task interrupted, treat as canceled to cleanup
         QuartzTaskFuture future = taskInfo.getTaskFuture();
@@ -306,7 +308,7 @@ public class QuartzTaskJob
   /**
    * Saves {@link TaskConfiguration} back to the given {@link JobDetail}.
    */
-  private static void updateJobData(final JobDetail jobDetail, final TaskConfiguration taskConfiguration) {
+  public static void updateJobData(final JobDetail jobDetail, final TaskConfiguration taskConfiguration) {
     JobDataMap jobDataMap = jobDetail.getJobDataMap();
     taskConfiguration.asMap().forEach((key, value) -> {
       if (!value.equals(jobDataMap.get(key))) {

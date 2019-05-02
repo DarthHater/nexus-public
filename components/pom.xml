@@ -20,7 +20,7 @@
   <parent>
     <groupId>org.sonatype.nexus</groupId>
     <artifactId>nexus-parent</artifactId>
-    <version>3.11.0-SNAPSHOT</version>
+    <version>3.17.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>nexus-components</artifactId>
@@ -28,7 +28,6 @@
   <packaging>pom</packaging>
 
   <modules>
-    <module>nexus-analytics-api</module>
     <module>nexus-audit</module>
     <module>nexus-base</module>
     <module>nexus-blobstore</module>
@@ -36,6 +35,7 @@
     <module>nexus-blobstore-file</module>
     <module>nexus-bootstrap</module>
     <module>nexus-capability</module>
+    <module>nexus-cleanup</module>
     <module>nexus-commands</module>
     <module>nexus-common</module>
     <module>nexus-core</module>
@@ -91,7 +91,7 @@
         <groupId>org.sonatype.nexus.buildsupport</groupId>
         <artifactId>nexus-buildsupport-all</artifactId>
         <type>pom</type>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <scope>import</scope>
       </dependency>
 
@@ -99,7 +99,7 @@
         <groupId>org.sonatype.nexus.bundles</groupId>
         <artifactId>nexus-thirdparty-bundles</artifactId>
         <type>pom</type>
-        <version>3.11.0-SNAPSHOT</version>
+        <version>3.17.0-SNAPSHOT</version>
         <scope>import</scope>
       </dependency>
 

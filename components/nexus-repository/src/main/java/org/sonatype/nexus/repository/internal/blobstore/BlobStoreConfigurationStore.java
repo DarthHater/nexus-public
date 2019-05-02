@@ -13,6 +13,7 @@
 package org.sonatype.nexus.repository.internal.blobstore;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.sonatype.goodies.lifecycle.Lifecycle;
 import org.sonatype.nexus.blobstore.api.BlobStoreConfiguration;
@@ -36,7 +37,31 @@ public interface BlobStoreConfigurationStore
   void create(BlobStoreConfiguration configuration);
 
   /**
+   * Update an existing BlobStoreConfiguration.
+   *
+   * @since 3.14
+   */
+  void update(BlobStoreConfiguration configuration);
+
+  /**
    * Delete an existing BlobStoreConfiguration.
    */
   void delete(BlobStoreConfiguration configuration);
+
+  /**
+   * Find a BlobStoreConfiguration by name.
+   *
+   * @since 3.14
+   */
+  BlobStoreConfiguration read(String name);
+
+  /**
+   * Find the parent group of a blob store
+   *
+   * @param name of the child to search on
+   * @return the {@link Optional<BlobStoreConfiguration>} for the parent group if it exists
+   *
+   * @since 3.15
+   */
+  Optional<BlobStoreConfiguration> findParent(String name);
 }

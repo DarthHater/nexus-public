@@ -25,8 +25,11 @@ import org.sonatype.nexus.common.stateguard.StateGuardLifecycleSupport;
 import org.sonatype.nexus.orient.DatabaseManager;
 import org.sonatype.nexus.orient.DatabaseServer;
 
+import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.compression.OCompression;
 import com.orientechnologies.orient.core.compression.OCompressionFactory;
+import com.orientechnologies.orient.core.conflict.ORecordConflictStrategy;
+import com.orientechnologies.orient.core.conflict.ORecordConflictStrategyFactory;
 import com.orientechnologies.orient.core.sql.OSQLEngine;
 import com.orientechnologies.orient.core.sql.functions.OSQLFunctionAbstract;
 
@@ -56,13 +59,15 @@ public class OrientBootstrap
                          final Provider<DatabaseServer> databaseServer,
                          final Provider<DatabaseManager> databaseManager,
                          final Iterable<OCompression> managedCompressions,
-                         final Iterable<OSQLFunctionAbstract> functions)
+                         final Iterable<OSQLFunctionAbstract> functions,
+                         final Iterable<ORecordConflictStrategy> conflictStrategies)
   {
     this.nodeAccess = checkNotNull(nodeAccess);
     this.databaseServer = checkNotNull(databaseServer);
     this.databaseManager = checkNotNull(databaseManager);
     registerCompressions(checkNotNull(managedCompressions));
     registerCustomFunctions(checkNotNull(functions));
+    registerConflictStrategies(checkNotNull(conflictStrategies));
   }
 
 
@@ -101,6 +106,14 @@ public class OrientBootstrap
     for (OSQLFunctionAbstract function : functions) {
       log.debug("Registering OrientDB function " + function.getName());
       OSQLEngine.getInstance().registerFunction(function.getName(), function);
+    }
+  }
+
+  private void registerConflictStrategies(final Iterable<ORecordConflictStrategy> strategies) {
+    ORecordConflictStrategyFactory strategyFactory = Orient.instance().getRecordConflictStrategy();
+    for (ORecordConflictStrategy strategy : strategies) {
+      log.debug("Registering OrientDB conflict strategy {} as '{}'", strategy, strategy.getName());
+      strategyFactory.registerImplementation(strategy.getName(), strategy);
     }
   }
 }

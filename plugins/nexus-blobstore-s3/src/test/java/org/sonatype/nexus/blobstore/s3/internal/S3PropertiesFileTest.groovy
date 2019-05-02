@@ -12,8 +12,6 @@
  */
 package org.sonatype.nexus.blobstore.s3.internal
 
-import java.io.ByteArrayInputStream
-
 import com.amazonaws.services.s3.AmazonS3
 import com.amazonaws.services.s3.model.S3Object
 import com.amazonaws.services.s3.model.S3ObjectInputStream
@@ -60,6 +58,18 @@ public class S3PropertiesFileTest
         assert text.contains('testProperty=newValue' + System.lineSeparator())
         assert metadata.contentLength == text.length()
       }
+  }
+
+  def "The toString is formatted properly"() {
+    given:
+      S3PropertiesFile propertiesFile = new S3PropertiesFile(s3, 'mybucket', 'mykey/with/nesting/')
+
+    when:
+      propertiesFile.setProperty('testProperty', 'newValue')
+      propertiesFile.setProperty('otherKey', 'otherValue')
+
+    then:
+      assert propertiesFile.toString() == "s3://mybucket/mykey/with/nesting/ {testProperty=newValue, otherKey=otherValue}"
   }
 }
 

@@ -33,6 +33,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
+import static java.util.Collections.unmodifiableSet;
 import static org.sonatype.nexus.repository.http.HttpMethods.GET;
 import static org.sonatype.nexus.repository.http.HttpMethods.HEAD;
 
@@ -47,6 +48,8 @@ public class GroupHandler
     extends ComponentSupport
     implements Handler
 {
+  public static final String USE_DISPATCHED_RESPONSE = "USE_DISPATCHED_RESPONSE";
+
   /**
    * Request-context state container for set of repositories already dispatched to.
    */
@@ -66,6 +69,15 @@ public class GroupHandler
     @Override
     public String toString() {
       return dispatched.toString();
+    }
+
+    /**
+     * Get dispatched repositories names
+     *
+     * @return Unmodifiable {@link Set} of Dispatched repository names.
+     */
+    public Set<String> getDispatched() {
+      return unmodifiableSet(dispatched);
     }
   }
 
@@ -119,7 +131,7 @@ public class GroupHandler
       final ViewFacet view = member.facet(ViewFacet.class);
       final Response response = view.dispatch(request, context);
       log.trace("Member {} response {}", member, response.getStatus());
-      if (response.getStatus().isSuccessful()) {
+      if (isValidResponse(response)) {
         return response;
       }
     }
@@ -180,5 +192,9 @@ public class GroupHandler
    */
   protected Response notFoundResponse(final Context context) {
     return HttpResponses.notFound();
+  }
+
+  private boolean isValidResponse(final Response response) {
+    return response.getStatus().isSuccessful() || response.getAttributes().contains(USE_DISPATCHED_RESPONSE);
   }
 }

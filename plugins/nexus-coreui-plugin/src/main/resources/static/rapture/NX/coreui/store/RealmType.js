@@ -31,11 +31,9 @@ Ext.define('NX.coreui.store.RealmType', {
 
     reader: {
       type: 'json',
-      root: 'data',
-      idProperty: 'id',
+      rootProperty: 'data',
       successProperty: 'success'
     }
-  },
+  }
 
-  sorters: { property: 'name', direction: 'ASC' }
 });

@@ -19,7 +19,6 @@ import javax.cache.CacheManager;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Provider;
-import javax.inject.Singleton;
 
 import org.sonatype.goodies.common.ComponentSupport;
 import org.sonatype.nexus.common.node.NodeAccess;
@@ -37,7 +36,7 @@ import static com.google.common.base.Preconditions.checkState;
  * @since 3.0
  */
 @Named("default")
-@Singleton
+// not a singleton because we want to provide a new manager when bouncing services
 public class RuntimeCacheManagerProvider
     extends ComponentSupport
     implements Provider<CacheManager>
@@ -63,7 +62,7 @@ public class RuntimeCacheManagerProvider
     Provider<CacheManager> provider = providers.get(name);
     checkState(provider != null, "Cache-provider vanished: %s", name);
     CacheManager manager = provider.get();
-    log.debug("Constructed cache-manager: {} -> {}", name, manager);
+    log.debug("Constructed cache-provider: {} -> {}", name, manager);
     return manager;
   }
 }

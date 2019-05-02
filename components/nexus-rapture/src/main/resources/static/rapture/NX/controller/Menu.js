@@ -27,7 +27,8 @@ Ext.define('NX.controller.Menu', {
     'NX.Security',
     'NX.State',
     'NX.view.header.Mode',
-    'NX.I18n'
+    'NX.I18n',
+    'Ext.state.Manager'
   ],
 
   views: [
@@ -134,10 +135,10 @@ Ext.define('NX.controller.Menu', {
       },
       component: {
         'nx-feature-menu': {
-          select: me.onSelection,
           itemclick: me.onItemClick,
           afterrender: me.onAfterRender,
-          beforecellclick: me.warnBeforeMenuSelect
+          beforecellclick: me.warnBeforeMenuSelect,
+          beforeselect: me.onBeforeSelect
         },
         'nx-main #quicksearch': {
           beforesearch: me.warnBeforeSearch
@@ -163,16 +164,6 @@ Ext.define('NX.controller.Menu', {
         }
       }
     });
-
-    me.addEvents(
-        /**
-         * Fires when a feature is selected.
-         *
-         * @event featureselected
-         * @param {NX.model.Feature} selected feature
-         */
-        'featureselected'
-    );
 
     // Warn people about refreshing or closing their browser when there are unsaved changes
     me.warnBeforeUnload();
@@ -209,38 +200,38 @@ Ext.define('NX.controller.Menu', {
     var me = this,
         selection = me.getFeatureMenu().getSelectionModel().getSelection();
 
+    if (!selection.length) {
+      me.getFeatureMenu().setSelection(me.getFeatureMenu().getStore().first());
+      selection = me.getFeatureMenu().getSelectionModel().getSelection();
+    }
+
     return NX.Bookmarks.fromToken(selection.length ? selection[0].get('bookmark') : me.mode);
   },
 
   /**
    * Select a feature when the associated menu item is clicked
    *
-   * @private
-   */
-  onItemClick: function (panel, featureMenuModel) {
-    this.selectMenuItem(featureMenuModel, true);
-  },
-
-  /**
-   * Select a feature when the associated menu item is selected. This differs
-   * from onItemClick in that an already selected feature will not be reselected.
+   * @param panel - the panel that was clicked
+   * @param featureMenuModel - the model of the record that was clicked
+   * @param forceReselectOrHtmlElement - if generic event fired by ext, this will simply be the htmlElement
+   *        otherwise if fired by navigateTo function of this class (in case of browser url-tweaking or
+   *        back/forward buttons) will be a boolean stating to not force a reselect
    *
    * @private
    */
-  onSelection: function (panel, featureMenuModel) {
-    this.selectMenuItem(featureMenuModel, false);
-  },
-
-  /**
-   * (Re)select a feature
-   *
-   * @private
-   */
-  selectMenuItem: function (featureMenuModel, reselect) {
+  onItemClick: function (panel, featureMenuModel, forceReselectOrHtmlElement) {
     var me = this,
-      path = featureMenuModel.get('path');
+        path = featureMenuModel.get('path'),
+        forceReselect = forceReselectOrHtmlElement,
+        pathIsChanging = path !== me.currentSelectedPath,
+        isGroup = featureMenuModel.get('group'),
+        externalLink = featureMenuModel.get('hrefTarget') === '_blank',
+        separator = featureMenuModel.get('separator');
 
-    if (reselect || path !== me.currentSelectedPath || featureMenuModel.get('group')) {
+    if (externalLink || separator) {
+      return;
+    }
+    else if (forceReselect || pathIsChanging || isGroup) {
       me.currentSelectedPath = path;
 
       //<if debug>
@@ -252,6 +243,15 @@ Ext.define('NX.controller.Menu', {
       }
       me.selectFeature(me.getStore('Feature').getById(featureMenuModel.get('path')));
       me.populateFeatureGroupStore(featureMenuModel);
+    }
+  },
+
+  onBeforeSelect: function(panel, featureMenuModel) {
+    var externalLink = featureMenuModel.get('hrefTarget') === '_blank',
+        separator = featureMenuModel.get('separator');
+
+    if (externalLink || separator) {
+      return false;
     }
   },
 
@@ -315,6 +315,7 @@ Ext.define('NX.controller.Menu', {
 
       mode = me.getMode(bookmark);
       // if we are navigating to a new mode, sync it
+
       if (me.mode !== mode) {
         me.mode = mode;
         me.refreshModes();
@@ -339,9 +340,11 @@ Ext.define('NX.controller.Menu', {
       if (node) {
         me.bookmarkingEnabled = me.navigateToFirstFeature;
         me.navigateToFirstFeature = false;
-        me.getFeatureMenu().selectPath(node.getPath('text'), 'text', undefined, function () {
+
+        me.getFeatureMenu().selectPath(node.getPath('text'), 'text', '/', function () {
           me.bookmarkingEnabled = true;
         });
+        me.getFeatureMenu().fireEvent('itemclick', me.getFeatureMenu(), node, false);
       }
       else {
         delete me.currentSelectedPath;
@@ -510,6 +513,7 @@ Ext.define('NX.controller.Menu', {
     var me = this,
         menuTitle = me.mode,
         groupsToRemove = [],
+        nodeExpandMap = Ext.state.Manager.get("MenuExpandMap") || {},
         feature, segments, parent, child, mode;
 
     //<if debug>
@@ -554,11 +558,24 @@ Ext.define('NX.controller.Menu', {
             }
             else {
               // create the leaf
-              child = parent.appendChild(Ext.apply(feature, {
+              child = parent.appendChild({
                 leaf: true,
-                iconCls: NX.Icons.cls(feature.iconName, 'x16'),
-                qtip: feature.description
-              }));
+                iconCls: feature.iconCls || NX.Icons.cls(feature.iconName, 'x16'),
+                qtip: feature.description,
+                authenticationRequired: feature.authenticationRequired,
+                bookmark: feature.bookmark,
+                expanded: nodeExpandMap[feature.path] === undefined ? feature.expanded : nodeExpandMap[feature.path],
+                helpKeyword: feature.helpKeyword,
+                iconName: feature.iconName,
+                mode: feature.mode,
+                path: feature.path,
+                text: feature.text,
+                view: feature.view,
+                weight: feature.weight,
+                grouped: feature.group
+              });
+
+              me.addExpandCollapseHandlers(child, feature.path);
             }
           }
           parent = child;
@@ -568,7 +585,7 @@ Ext.define('NX.controller.Menu', {
 
     // remove all groups without children
     me.getStore('FeatureMenu').getRootNode().cascadeBy(function (node) {
-      if (node.get('group') && !node.hasChildNodes()) {
+      if (node.get('grouped') && !node.hasChildNodes()) {
         groupsToRemove.push(node);
       }
     });
@@ -581,7 +598,26 @@ Ext.define('NX.controller.Menu', {
       { property: 'text', direction: 'ASC' }
     ]);
 
+    me.addExternalLinks();
+
     Ext.resumeLayouts(true);
+  },
+
+  /**
+   * @private
+   */
+  addExpandCollapseHandlers: function (node, path) {
+    node.on('expand', function(path) {
+      var nodeExpandMap = Ext.state.Manager.get("MenuExpandMap") || {};
+      nodeExpandMap[path] = true;
+      Ext.state.Manager.set("MenuExpandMap", nodeExpandMap);
+    }.bind(this, path));
+
+    node.on('collapse', function(path) {
+      var nodeExpandMap = Ext.state.Manager.get("MenuExpandMap") || {};
+      nodeExpandMap[path] = false;
+      Ext.state.Manager.set("MenuExpandMap", nodeExpandMap);
+    }.bind(this, path));
   },
 
   /**
@@ -877,5 +913,32 @@ Ext.define('NX.controller.Menu', {
         return NX.I18n.get('Menu_Browser_Title');
       }
     };
+  },
+
+  addExternalLinks: function() {
+    var rootNode = this.getStore('FeatureMenu').getRootNode(),
+        clmState = NX.State.getValue('clm'),
+        showDashboardUrl = clmState && clmState.enabled && clmState.url,
+        shouldShowDashboardLink = showDashboardUrl && clmState.showLink;
+
+    if (this.mode === 'browse' && shouldShowDashboardLink) {
+      rootNode.appendChild({
+        leaf: true,
+        separator: true,
+        cls: 'separator',
+        iconCls: ' ',
+        text: ' '
+      });
+      rootNode.appendChild({
+        leaf: true,
+        qtip: NX.I18n.get('Clm_Dashboard_Description'),
+        authenticationRequired: false,
+        mode: 'browse',
+        text: NX.I18n.get('Clm_Dashboard_Link_Text'),
+        href: showDashboardUrl,
+        hrefTarget: '_blank',
+        cls: 'iq-dashboard-link'
+      });
+    }
   }
 });

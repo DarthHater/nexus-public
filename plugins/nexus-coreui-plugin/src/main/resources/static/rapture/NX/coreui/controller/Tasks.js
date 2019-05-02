@@ -44,6 +44,7 @@ Ext.define('NX.coreui.controller.Tasks', {
     'task.TaskList',
     'task.TaskSelectType',
     'task.TaskScheduleFieldSet',
+    'task.TaskScheduleFields',
     'task.TaskScheduleAdvanced',
     'task.TaskScheduleDaily',
     'task.TaskScheduleHourly',
@@ -153,11 +154,18 @@ Ext.define('NX.coreui.controller.Tasks', {
   onSelection: function(list, model) {
     var me = this,
         settings = me.getSettings(),
-        taskTypeModel;
+        taskTypeModel,
+        taskTypeStore = me.getStore('TaskType');
 
     if (Ext.isDefined(model)) {
       me.showSummary(model);
-      taskTypeModel = me.getStore('TaskType').getById(model.get('typeId'));
+      if (!taskTypeStore.isLoaded()) {
+        taskTypeStore.on('load', function() {
+          me.onSelection(list, model);
+        }, me, {single: true});
+        return;
+      }
+      taskTypeModel = taskTypeStore.getById(model.get('typeId'));
       if (taskTypeModel) {
         if (!settings) {
           me.addTab({ xtype: 'nx-coreui-task-settings', title: NX.I18n.get('Tasks_Settings_Title'), weight: 20 });
@@ -231,7 +239,7 @@ Ext.define('NX.coreui.controller.Tasks', {
 
     // Show the first panel in the create wizard, and set the breadcrumb
     me.setItemName(1, NX.I18n.get('Tasks_Select_Title'));
-    me.loadCreateWizard(1, true, Ext.widget({
+    me.loadCreateWizard(1, Ext.widget({
       xtype: 'panel',
       layout: {
         type: 'vbox',
@@ -253,7 +261,7 @@ Ext.define('NX.coreui.controller.Tasks', {
 
     // Show the second panel in the create wizard, and set the breadcrumb
     me.setItemName(2, NX.I18n.format('Tasks_Create_Title', model.get('name')));
-    me.loadCreateWizard(2, true, panel = Ext.widget({
+    me.loadCreateWizard(2, panel = Ext.widget({
       xtype: 'panel',
       layout: {
         type: 'vbox',
@@ -335,9 +343,12 @@ Ext.define('NX.coreui.controller.Tasks', {
             NX.Conditions.storeHasRecords('TaskType')
         ),
         {
-          satisfied: button.enable,
-          unsatisfied: button.disable,
-          scope: button
+          satisfied: function () {
+            button.enable();
+          },
+          unsatisfied: function () {
+            button.disable();
+          }
         }
     );
   },
@@ -348,17 +359,19 @@ Ext.define('NX.coreui.controller.Tasks', {
    * Enable 'Run' when user has 'read' permission and task is 'runnable'.
    */
   bindRunButton: function(button) {
+    var me = this;
     button.mon(
         NX.Conditions.and(
             NX.Conditions.isPermitted('nexus:tasks:start'),
-            NX.Conditions.gridHasSelection('nx-coreui-task-list', function(model) {
-              return model.get('runnable');
-            })
+            NX.Conditions.watchEvents(me.getObservables(), me.watchEventsHandler({run: true}))
         ),
         {
-          satisfied: button.enable,
-          unsatisfied: button.disable,
-          scope: button
+          satisfied: function () {
+            button.enable();
+          },
+          unsatisfied: function () {
+            button.disable();
+          }
         }
     );
   },
@@ -369,19 +382,56 @@ Ext.define('NX.coreui.controller.Tasks', {
    * Enable 'Stop' when user has 'delete' permission and task is 'stoppable'.
    */
   bindStopButton: function(button) {
+    var me = this;
     button.mon(
         NX.Conditions.and(
             NX.Conditions.isPermitted('nexus:tasks:stop'),
-            NX.Conditions.gridHasSelection('nx-coreui-task-list', function(model) {
-              return model.get('stoppable');
-            })
+            NX.Conditions.watchEvents(me.getObservables(), me.watchEventsHandler({stop: true}))
         ),
         {
-          satisfied: button.enable,
-          unsatisfied: button.disable,
-          scope: button
+          satisfied: function () {
+            button.enable();
+          },
+          unsatisfied: function () {
+            button.disable();
+          }
         }
     );
+  },
+
+  /**
+   * @private
+   */
+  getObservables: function () {
+    var me = this;
+    return [
+      { observable: me.getStore('Task'), events: ['load']},
+      { observable: Ext.History, events: ['change']}
+    ];
+  },
+
+  /**
+   * @private
+   */
+  watchEventsHandler: function (options) {
+    var me = this,
+        store = me.getStore('Task');
+
+    return function() {
+      var taskId = me.getModelIdFromBookmark(),
+          model = taskId ? store.findRecord('id', taskId, 0, false, true, true) : undefined;
+
+      if (model) {
+        if (options.run) {
+          return model.get('runnable');
+        }
+        else if (options.stop) {
+          return model.get('stoppable');
+        }
+      }
+
+      return false;
+    };
   },
 
   /**
@@ -420,20 +470,25 @@ Ext.define('NX.coreui.controller.Tasks', {
     description = me.getDescription(model);
 
     if (model) {
-      description = me.getDescription(model);
-      NX.Dialogs.askConfirmation(NX.I18n.get('Tasks_RunConfirm_Title'),
-        NX.I18n.format('Tasks_RunConfirm_HelpText', description), function() {
-        me.getContent().getEl().mask(NX.I18n.get('Tasks_Run_Mask'));
-        NX.direct.coreui_Task.run(model.getId(), function(response) {
-          me.getContent().getEl().unmask();
-          if (Ext.isObject(response) && response.success) {
-            me.getStore('Task').load();
-            NX.Messages.add({
-              text: NX.I18n.format('Tasks_Run_Success', description), type: 'success'
-            });
-          }
-        });
-      }, {scope: me});
+      if (model.data.enabled) {
+        description = me.getDescription(model);
+        NX.Dialogs.askConfirmation(NX.I18n.get('Tasks_RunConfirm_Title'),
+            NX.I18n.format('Tasks_RunConfirm_HelpText', description), function() {
+              me.getContent().getEl().mask(NX.I18n.get('Tasks_Run_Mask'));
+              NX.direct.coreui_Task.run(model.getId(), function(response) {
+                me.getContent().getEl().unmask();
+                if (Ext.isObject(response) && response.success) {
+                  me.getStore('Task').load();
+                  NX.Messages.add({
+                    text: NX.I18n.format('Tasks_Run_Success', description), type: 'success'
+                  });
+                }
+              });
+            }, {scope: me});
+      }
+      else {
+        NX.Messages.warning(NX.I18n.get('Tasks_Run_Disabled'));
+      }
     }
   },
 

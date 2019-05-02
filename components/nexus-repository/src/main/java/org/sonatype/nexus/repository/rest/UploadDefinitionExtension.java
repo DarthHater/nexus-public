@@ -13,7 +13,6 @@
 package org.sonatype.nexus.repository.rest;
 
 import org.sonatype.nexus.repository.upload.UploadFieldDefinition;
-import org.sonatype.nexus.repository.upload.UploadHandlerSupport;
 
 /**
  * Extension point interface which provides a mechanism for contributing an {@link UploadFieldDefinition}

@@ -1,0 +1,26 @@
+/**
+ * @class Ext.form.Fieldset
+ */
+
+fieldset.nx-form-section {
+  margin-bottom: 0;
+  padding-bottom: 20px;
+
+  & > .x-fieldset-header > .x-fieldset-header-text {
+    font-size: $font-size-h4;
+    line-height: 22px;
+  }
+
+  .x-fieldset-body {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  &.nx-no-title {
+    padding-top: 0;
+  }
+}
+
+.x-panel-nx-subsection-with-background-framed fieldset.nx-form-section {
+  padding-bottom: 0;
+}

@@ -267,6 +267,10 @@ class TaskComponent
           lastRunResult = 'Error'
           break
 
+        case EndState.INTERRUPTED:
+          lastRunResult = 'Interrupted'
+          break
+
         default:
           lastRunResult = endState.name()
       }
@@ -369,7 +373,7 @@ class TaskComponent
   @PackageScope
   EndState getAggregateEndState(final List<ClusteredTaskState> clusteredTaskStates) {
     return findTopPriorityState(clusteredTaskStates*.lastEndState as Set, [EndState.FAILED, EndState.CANCELED,
-        EndState.OK])
+        EndState.INTERRUPTED, EndState.OK])
   }
 
   @PackageScope
@@ -408,7 +412,7 @@ class TaskComponent
 
   private boolean hasAnyNotCompletedSuccessfully(final List<ClusteredTaskState> clusteredTaskStates) {
     return clusteredTaskStates.any {
-      it.state == State.RUNNING || it.lastEndState in [EndState.FAILED, EndState.CANCELED]
+      it.state == State.RUNNING || it.lastEndState in [EndState.INTERRUPTED, EndState.FAILED, EndState.CANCELED]
     }
   }
 
@@ -450,9 +454,14 @@ class TaskComponent
 
   @PackageScope
   void validateState(final TaskInfo task) {
-    State state = task.currentState.state
-    if (State.RUNNING == state) {
-      throw new Exception('Task can not be edited while it is being executed or it is in line to be executed')
+    State localState = task.currentState.state
+    List<ClusteredTaskState> clusteredTaskStates = scheduler.getClusteredTaskStateById(task.id)
+    boolean running = localState == State.RUNNING ||
+        (clusteredTaskStates != null &&
+         clusteredTaskStates.any { clusteredTaskState -> clusteredTaskState.state == State.RUNNING })
+    if (running) {
+      throw new IllegalStateException(
+          'Task can not be edited while it is being executed or it is in line to be executed')
     }
   }
 

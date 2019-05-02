@@ -52,7 +52,7 @@ Ext.define('NX.view.drilldown.Details', {
       },
       {
         xtype: 'nx-actions',
-        items: me.actions
+        items: me.nxActions
       },
       {
         xtype: 'nx-sorted-tabpanel',
@@ -71,10 +71,19 @@ Ext.define('NX.view.drilldown.Details', {
     me.on('afterrender', me.calculateBookmarks, me);
   },
 
-  showInfo: function(message) {
+  showInfo: function(message, tooltipText) {
     var infoPanel = this.down('>#info');
 
     infoPanel.setTitle(message);
+    Ext.tip.QuickTipManager.unregister(infoPanel.getId());
+    if (tooltipText) {
+      Ext.tip.QuickTipManager.register({
+        showDelay: 50,
+        target: infoPanel.getId(),
+        text  : tooltipText,
+        trackMouse: true
+      });
+    }
     infoPanel.show();
   },
 

@@ -15,6 +15,7 @@ package org.sonatype.nexus.blobstore.restore;
 import java.util.Properties;
 
 import org.sonatype.nexus.blobstore.api.Blob;
+import org.sonatype.nexus.repository.Repository;
 
 /**
  * @since 3.4
@@ -38,4 +39,13 @@ public interface RestoreBlobStrategy
    * @param isDryRun if {@code true}, no lasting changes will be made, only logged
    */
   void restore(Properties properties, Blob blob, String blobStoreName, boolean isDryRun);
+
+  /**
+   * Runs after all blobs have been restored to the database.
+   * 
+   * @since 3.15
+   * @param updateAssets whether updating assets is expected or not
+   * @param repository repository to update
+   */
+  void after(boolean updateAssets, final Repository repository);
 }

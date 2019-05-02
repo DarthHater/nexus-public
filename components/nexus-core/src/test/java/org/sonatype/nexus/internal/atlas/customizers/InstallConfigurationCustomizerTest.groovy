@@ -73,7 +73,7 @@ class InstallConfigurationCustomizerTest
   }
 
   @Test
-  void 'SanitizedHazelcastFileSource removes aws credentials'() {
+  void 'SanitizedHazelcastFileSource removes aws credentials and text from known password fields'() {
     File temp = File.createTempFile("test-", ".xml")
     temp.deleteOnExit()
 
@@ -92,6 +92,12 @@ class InstallConfigurationCustomizerTest
         <tag-value>nxrm</tag-value>
       </aws>
     </join>
+    <symmetric-encryption enabled="false">
+      <algorithm>PBEWithMD5AndDES</algorithm>
+      <salt>thesalt</salt>
+      <password>thepass</password>
+      <iteration-count>19</iteration-count>
+    </symmetric-encryption>
   </network>
 </hazelcast>
 '''
@@ -114,6 +120,12 @@ class InstallConfigurationCustomizerTest
         <tag-value>nxrm</tag-value>
       </aws>
     </join>
+    <symmetric-encryption enabled="false">
+      <algorithm>PBEWithMD5AndDES</algorithm>
+      <salt>thesalt</salt>
+      <password>removed</password>
+      <iteration-count>19</iteration-count>
+    </symmetric-encryption>
   </network>
 </hazelcast>
 '''
@@ -121,6 +133,85 @@ class InstallConfigurationCustomizerTest
     def diff = DiffBuilder.compare(Input.fromString(expected))
       .withTest(Input.fromStream(source.content))
       .build()
+
+    assertFalse(diff.toString(), diff.hasDifferences())
+  }
+
+  @Test
+  void 'SanitizedHazelcastFileSource removes aws credentials and text from known password fields in discovery strategy'() {
+    File temp = File.createTempFile("test-", ".xml")
+    temp.deleteOnExit()
+
+    temp << '''<?xml version="1.0" encoding="UTF-8"?>
+<hazelcast xmlns="http://www.hazelcast.com/schema/config"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.hazelcast.com/schema/config hazelcast-config-3.6.xsd">
+  <properties>
+    <property name="hazelcast.discovery.enabled">true</property>
+  </properties>
+
+  <network>
+    <join>
+      <multicast enabled="false"/>
+      <tcp-ip enabled="false" />
+      <aws enabled="false"/>
+
+      <discovery-strategies>
+        <discovery-strategy enabled="true" class="com.hazelcast.aws.AwsDiscoveryStrategy">
+          <properties>
+            <property name="tag-key">Purpose</property>
+            <property name="tag-value">Nexus Repository Manager</property>
+            <property name="iam-role">EC2_IAM_ROLE_NAME</property>
+            <property name="security-group-name">EC2_SECURITY_GROUP_NAME</property>
+            <property name="region">us-west-1</property>
+            <property name="access-key">my-access-key</property>
+            <property name="secret-key">my-secret-key</property>
+          </properties>
+        </discovery-strategy>
+      </discovery-strategies>
+    </join>
+  </network>
+</hazelcast>
+'''
+
+    SanitizedHazelcastFileSource source = new SanitizedHazelcastFileSource(CONFIG, 'test/file', temp, DEFAULT)
+    source.prepare()
+
+    final String expected = '''<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<hazelcast xmlns="http://www.hazelcast.com/schema/config"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.hazelcast.com/schema/config hazelcast-config-3.6.xsd">
+  <properties>
+    <property name="hazelcast.discovery.enabled">true</property>
+  </properties>
+
+  <network>
+    <join>
+      <multicast enabled="false"/>
+      <tcp-ip enabled="false" />
+      <aws enabled="false"/>
+
+      <discovery-strategies>
+        <discovery-strategy enabled="true" class="com.hazelcast.aws.AwsDiscoveryStrategy">
+          <properties>
+            <property name="tag-key">Purpose</property>
+            <property name="tag-value">Nexus Repository Manager</property>
+            <property name="iam-role">EC2_IAM_ROLE_NAME</property>
+            <property name="security-group-name">EC2_SECURITY_GROUP_NAME</property>
+            <property name="region">us-west-1</property>
+            <property name="access-key">removed</property>
+            <property name="secret-key">removed</property>
+          </properties>
+        </discovery-strategy>
+      </discovery-strategies>
+    </join>
+  </network>
+</hazelcast>
+'''
+
+    def diff = DiffBuilder.compare(Input.fromString(expected))
+        .withTest(Input.fromStream(source.content))
+        .build()
 
     assertFalse(diff.toString(), diff.hasDifferences())
   }

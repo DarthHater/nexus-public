@@ -12,17 +12,13 @@
  */
 package org.sonatype.nexus.coreui
 
-import javax.annotation.Nullable
 import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Singleton
 
-import org.sonatype.nexus.common.app.VersionComparator
 import org.sonatype.nexus.common.encoding.EncodingUtil
-import org.sonatype.nexus.common.text.Strings2
 import org.sonatype.nexus.extdirect.DirectComponent
 import org.sonatype.nexus.extdirect.DirectComponentSupport
-import org.sonatype.nexus.rapture.StateContributor
 import org.sonatype.nexus.repository.Repository
 import org.sonatype.nexus.repository.browse.BrowseNodeConfiguration
 import org.sonatype.nexus.repository.manager.RepositoryManager
@@ -32,6 +28,7 @@ import com.codahale.metrics.annotation.ExceptionMetered
 import com.codahale.metrics.annotation.Timed
 import com.softwarementors.extjs.djn.config.annotations.DirectAction
 import com.softwarementors.extjs.djn.config.annotations.DirectMethod
+import groovy.transform.PackageScope
 
 /**
  * Browse {@link DirectComponent}.
@@ -43,11 +40,10 @@ import com.softwarementors.extjs.djn.config.annotations.DirectMethod
 @DirectAction(action = 'coreui_Browse')
 class BrowseComponent
     extends DirectComponentSupport
-    implements StateContributor
 {
-  static final FOLDER = "folder"
-  static final COMPONENT = "component"
-  static final ASSET = "asset"
+  @PackageScope static final FOLDER = "folder"
+  @PackageScope static final COMPONENT = "component"
+  @PackageScope static final ASSET = "asset"
 
   @Inject
   BrowseNodeConfiguration configuration
@@ -57,8 +53,6 @@ class BrowseComponent
 
   @Inject
   RepositoryManager repositoryManager
-
-  final VersionComparator versionComparator = new VersionComparator()
 
   @DirectMethod
   @Timed
@@ -88,28 +82,7 @@ class BrowseComponent
           componentId: browseNode.componentId != null ? browseNode.componentId.value : null,
           assetId: browseNode.assetId != null ? browseNode.assetId.value : null
       )
-    }.sort { a, b ->
-      if (a.type == COMPONENT && b.type == COMPONENT) {
-        try {
-          return versionComparator.compare(a.text, b.text)
-        }
-        catch (IllegalArgumentException e) {
-          return 0
-        }
-      }
-      else if (a.type == b.type) {
-        return Strings2.lower(a.text) <=> Strings2.lower(b.text)
-      }
-      else {
-        return b.type <=> a.type
-      }
     }
-  }
-
-  @Override
-  @Nullable
-  Map<String, Object> getState() {
-    return ['browseComponentAssetTree': configuration.enabled, 'browseTreeMaxNodes': configuration.maxNodes]
   }
 
   def isRoot(String path) {

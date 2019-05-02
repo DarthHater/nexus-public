@@ -33,6 +33,8 @@ Ext.define('NX.view.header.Panel', {
     pack: 'start'
   },
 
+  ariaRole: 'banner',
+
   /**
    * @override
    */
@@ -45,7 +47,7 @@ Ext.define('NX.view.header.Panel', {
         xtype: 'toolbar',
 
         // set height to ensure we have uniform size and not depend on what is in the toolbar
-        height: 40,
+        height: 50,
 
         anchor: '100%',
 

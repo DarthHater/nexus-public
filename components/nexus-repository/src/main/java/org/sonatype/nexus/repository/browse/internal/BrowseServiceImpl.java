@@ -15,9 +15,11 @@ package org.sonatype.nexus.repository.browse.internal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
@@ -32,11 +34,11 @@ import org.sonatype.nexus.common.entity.EntityId;
 import org.sonatype.nexus.orient.entity.AttachedEntityHelper;
 import org.sonatype.nexus.repository.Repository;
 import org.sonatype.nexus.repository.Type;
-import org.sonatype.nexus.repository.assetdownloadcount.AssetDownloadCountStore;
 import org.sonatype.nexus.repository.browse.BrowseResult;
 import org.sonatype.nexus.repository.browse.BrowseService;
 import org.sonatype.nexus.repository.browse.QueryOptions;
 import org.sonatype.nexus.repository.group.GroupFacet;
+import org.sonatype.nexus.repository.manager.RepositoryManager;
 import org.sonatype.nexus.repository.security.ContentPermissionChecker;
 import org.sonatype.nexus.repository.security.RepositorySelector;
 import org.sonatype.nexus.repository.security.VariableResolverAdapter;
@@ -84,13 +86,13 @@ public class BrowseServiceImpl
 
   private final ComponentEntityAdapter componentEntityAdapter;
 
-  private final AssetDownloadCountStore assetDownloadCountStore;
-
   private final AssetEntityAdapter assetEntityAdapter;
 
   private final VariableResolverAdapterManager variableResolverAdapterManager;
 
   private final ContentPermissionChecker contentPermissionChecker;
+
+  private final BrowseAssetIterableFactory browseAssetIterableFactory;
 
   private final BrowseAssetsSqlBuilder browseAssetsSqlBuilder;
 
@@ -98,26 +100,30 @@ public class BrowseServiceImpl
 
   private final BucketStore bucketStore;
 
+  private final RepositoryManager repositoryManager;
+
   @Inject
   public BrowseServiceImpl(@Named(GroupType.NAME) final Type groupType,
                            final ComponentEntityAdapter componentEntityAdapter,
                            final VariableResolverAdapterManager variableResolverAdapterManager,
                            final ContentPermissionChecker contentPermissionChecker,
-                           final AssetDownloadCountStore assetDownloadCountStore,
                            final AssetEntityAdapter assetEntityAdapter,
+                           final BrowseAssetIterableFactory browseAssetIterableFactory,
                            final BrowseAssetsSqlBuilder browseAssetsSqlBuilder,
                            final BrowseComponentsSqlBuilder browseComponentsSqlBuilder,
-                           final BucketStore bucketStore)
+                           final BucketStore bucketStore,
+                           final RepositoryManager repositoryManager)
   {
     this.groupType = checkNotNull(groupType);
     this.componentEntityAdapter = checkNotNull(componentEntityAdapter);
     this.variableResolverAdapterManager = checkNotNull(variableResolverAdapterManager);
     this.contentPermissionChecker = checkNotNull(contentPermissionChecker);
-    this.assetDownloadCountStore = checkNotNull(assetDownloadCountStore);
     this.assetEntityAdapter = checkNotNull(assetEntityAdapter);
+    this.browseAssetIterableFactory = checkNotNull(browseAssetIterableFactory);
     this.browseAssetsSqlBuilder = checkNotNull(browseAssetsSqlBuilder);
     this.browseComponentsSqlBuilder = checkNotNull(browseComponentsSqlBuilder);
     this.bucketStore = checkNotNull(bucketStore);
+    this.repositoryManager = checkNotNull(repositoryManager);
   }
 
   @Override
@@ -160,17 +166,38 @@ public class BrowseServiceImpl
       if (component == null) {
         return new BrowseResult<>(0, Collections.emptyList());
       }
-      VariableResolverAdapter variableResolverAdapter = variableResolverAdapterManager.get(component.format());
-      List<Asset> assets = StreamSupport.stream(storageTx.browseAssets(component).spliterator(), false)
-          .filter(
-              (Asset asset) -> contentPermissionChecker.isPermitted(
-                  repository.getName(),
-                  asset.format(),
-                  BreadActions.BROWSE,
-                  variableResolverAdapter.fromAsset(asset))
-          ).collect(Collectors.toList());
-      return new BrowseResult<>(assets.size(), assets);
+      return browseComponentAssetsHelper(storageTx, repository, component);
     }
+  }
+
+  @Override
+  public BrowseResult<Asset> browseComponentAssets(final Repository repository, final Component component)
+  {
+    checkNotNull(repository);
+    checkNotNull(component);
+    try (StorageTx storageTx = repository.facet(StorageFacet.class).txSupplier().get()) {
+      storageTx.begin();
+      return browseComponentAssetsHelper(storageTx, repository, component);
+    }
+  }
+
+  private BrowseResult<Asset> browseComponentAssetsHelper(StorageTx storageTx, Repository repository, Component component)
+  {
+    //As this method is only called when showing list of assets for a component in search results,
+    //we also need to check parent group(s) of the repository in question, as search doesn't have a
+    //'repository' context
+    Set<String> repoNames = new HashSet<>(repositoryManager.findContainingGroups(repository.getName()));
+    repoNames.add(repository.getName());
+    VariableResolverAdapter variableResolverAdapter = variableResolverAdapterManager.get(component.format());
+    List<Asset> assets = StreamSupport.stream(storageTx.browseAssets(component).spliterator(), false)
+        .filter(
+            (Asset asset) -> contentPermissionChecker.isPermitted(
+                repoNames,
+                asset.format(),
+                BreadActions.BROWSE,
+                variableResolverAdapter.fromAsset(asset))
+        ).collect(Collectors.toList());
+    return new BrowseResult<>(assets.size(), assets);
   }
 
   @Override
@@ -185,9 +212,8 @@ public class BrowseServiceImpl
       List<Asset> assets = Collections.emptyList();
       // ensure there are assets before incurring contentAuth overhead
       if (hasAssets(storageTx, repository, bucketIds, queryOptions)) {
-        assets = getAssets(storageTx.browse(
-            browseAssetsSqlBuilder.buildBrowseSql(bucketIds, queryOptions),
-            browseAssetsSqlBuilder.buildSqlParams(repository.getName(), queryOptions)));
+        assets = getAssets(browseAssetIterableFactory.create(
+            storageTx.getDb(), queryOptions.getLastId(), repository.getName(), bucketIds, queryOptions.getLimit()));
       }
       return new BrowseResult<>(queryOptions, assets);
     }
@@ -243,7 +269,7 @@ public class BrowseServiceImpl
     checkNotNull(repository);
     checkNotNull(assetId);
 
-    return getById(assetId, repository, "asset", assetEntityAdapter);
+    return getById(assetId, repository, assetEntityAdapter);
   }
 
   @Override
@@ -251,7 +277,7 @@ public class BrowseServiceImpl
     checkNotNull(repository);
     checkNotNull(componentId);
 
-    return getById(componentId, repository, "component", componentEntityAdapter);
+    return getById(componentId, repository, componentEntityAdapter);
   }
 
   @Override
@@ -266,14 +292,11 @@ public class BrowseServiceImpl
 
   private <T extends MetadataNode<?>> T getById(final ORID orid,
                                                 final Repository repository,
-                                                final String tableName,
                                                 final MetadataNodeEntityAdapter<T> adapter)
   {
-    String sql = format("SELECT * FROM %s WHERE contentAuth(@this, :browsedRepository) == true AND @RID == :rid",
-        tableName);
+    String sql = format("SELECT FROM %s WHERE contentAuth(@this, :browsedRepository) == true", orid);
 
-    Map<String, Object> params = ImmutableMap
-        .of("browsedRepository", repository.getName(), "rid", orid.toString());
+    Map<String, Object> params = ImmutableMap.of("browsedRepository", repository.getName());
 
     try (StorageTx storageTx = repository.facet(StorageFacet.class).txSupplier().get()) {
       storageTx.begin();
@@ -357,16 +380,5 @@ public class BrowseServiceImpl
     else {
       return Collections.singletonList(repository);
     }
-  }
-
-  @Override
-  public long getLastThirtyDays(Asset asset) {
-    checkNotNull(asset);
-    String repositoryName = bucketStore.getById(asset.bucketId()).getRepositoryName();
-
-    if (assetDownloadCountStore.isEnabled()) {
-      return assetDownloadCountStore.getLastThirtyDays(repositoryName, asset.name());
-    }
-    return 0;
   }
 }

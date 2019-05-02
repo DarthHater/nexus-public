@@ -33,7 +33,6 @@ import static java.util.stream.Collectors.toList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.junit.Assert.fail;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.sonatype.nexus.repository.upload.UploadFieldDefinition.Type.STRING;
 
@@ -49,10 +48,15 @@ public class ValidatingComponentUploadTest
   @Mock
   private AssetUpload assetUpload;
 
+  @Mock
+  private PartPayload payload;
+
   @Before
   public void setup() {
     when(uploadDefinition.getComponentFields()).thenReturn(emptyList());
     when(uploadDefinition.getAssetFields()).thenReturn(emptyList());
+    when(payload.getFieldName()).thenReturn("fieldname-foo");
+    when(payload.getName()).thenReturn("name-bar");
   }
 
   @Test
@@ -66,7 +70,7 @@ public class ValidatingComponentUploadTest
     when(uploadDefinition.getAssetFields()).thenReturn(
         Collections.singletonList(new UploadFieldDefinition("foo", false, STRING)));
 
-    when(assetUpload.getPayload()).thenReturn(mock(PartPayload.class));
+    when(assetUpload.getPayload()).thenReturn(payload);
     when(componentUpload.getAssetUploads()).thenReturn(Collections.singletonList(assetUpload));
 
     expectExceptionOnValidate(componentUpload, "Missing required asset field 'Foo' on '1'");
@@ -78,7 +82,7 @@ public class ValidatingComponentUploadTest
     when(uploadDefinition.getComponentFields()).thenReturn(
         Collections.singletonList(new UploadFieldDefinition("bar", false, STRING)));
 
-    when(assetUpload.getPayload()).thenReturn(mock(PartPayload.class));
+    when(assetUpload.getPayload()).thenReturn(payload);
     when(componentUpload.getAssetUploads()).thenReturn(Collections.singletonList(assetUpload));
 
     expectExceptionOnValidate(componentUpload, "Missing required component field 'Bar'");
@@ -91,7 +95,7 @@ public class ValidatingComponentUploadTest
     when(uploadDefinition.getComponentFields()).thenReturn(
         Collections.singletonList(new UploadFieldDefinition("bar", false, STRING)));
 
-    when(assetUpload.getPayload()).thenReturn(mock(PartPayload.class));
+    when(assetUpload.getPayload()).thenReturn(payload);
     when(assetUpload.getFields()).thenReturn(singletonMap("foo", "fooValue"));
     when(assetUpload.getField("foo")).thenReturn("fooValue");
 
@@ -115,15 +119,15 @@ public class ValidatingComponentUploadTest
 
     AssetUpload assetUploadOne = new AssetUpload();
     assetUploadOne.getFields().putAll(ImmutableMap.of("field1", "x", "field2", "y"));
-    assetUploadOne.setPayload(mock(PartPayload.class));
+    assetUploadOne.setPayload(payload);
 
     AssetUpload assetUploadTwo = new AssetUpload();
     assetUploadTwo.getFields().putAll(ImmutableMap.of("field1", "x", "field2", "y"));
-    assetUploadTwo.setPayload(mock(PartPayload.class));
+    assetUploadTwo.setPayload(payload);
 
     AssetUpload assetUploadThree = new AssetUpload();
     assetUploadThree.getFields().putAll(ImmutableMap.of("field1", "x"));
-    assetUploadThree.setPayload(mock(PartPayload.class));
+    assetUploadThree.setPayload(payload);
 
     ComponentUpload componentUpload = new ComponentUpload();
     componentUpload.getAssetUploads().addAll(Arrays.asList(assetUploadOne, assetUploadTwo, assetUploadThree));
@@ -138,7 +142,7 @@ public class ValidatingComponentUploadTest
 
     AssetUpload assetUpload = new AssetUpload();
     assetUpload.getFields().put("foo", "foo");
-    assetUpload.setPayload(mock(PartPayload.class));
+    assetUpload.setPayload(payload);
 
     ComponentUpload componentUpload = new ComponentUpload();
     componentUpload.getFields().put("bar", "bar");

@@ -26,6 +26,7 @@ Ext.define('NX.app.Application', {
     'Ext.direct.Manager',
     'Ext.state.Manager',
     'Ext.state.LocalStorageProvider',
+    'Ext.util.Cookies',
     'Ext.util.LocalStorage',
     'NX.view.Viewport',
     'NX.util.Url',
@@ -59,6 +60,13 @@ Ext.define('NX.app.Application', {
     'NX.ext.form.field.Display',
     'NX.ext.form.field.Number',
 
+    // panel overrides
+    'NX.ext.panel.Panel',
+    'NX.ext.panel.Header',
+
+    // toolbar overrides
+    'NX.ext.toolbar.Toolbar',
+
     // custom form fields
     'NX.ext.form.OptionalFieldSet',
     'NX.ext.form.field.Email',
@@ -77,11 +85,22 @@ Ext.define('NX.app.Application', {
     'NX.ext.grid.plugin.Filtering',
 
     // grid overrides
+    'NX.ext.grid.Panel',
+    'NX.ext.grid.column.Column',
     'NX.ext.grid.column.Date',
 
     // custom grid columns
     'NX.ext.grid.column.Icon',
-    'NX.ext.grid.column.CopyLink'
+    'NX.ext.grid.column.CopyLink',
+
+    // view overrides
+    'NX.ext.view.BoundList',
+
+    // animated card layout
+    'NX.ext.layout.container.Card',
+
+    // Override for ExtJS 6.6
+    'NX.ext.chart.legend.SpriteLegend'
   ],
 
   name: 'NX',
@@ -106,6 +125,7 @@ Ext.define('NX.app.Application', {
    */
   controllers: [
     'Copy',
+    'DependencySnippet',
     'Logging',
     'State',
     'Bookmarking',
@@ -153,6 +173,12 @@ Ext.define('NX.app.Application', {
     },
     bundleActive: function (symbolicName) {
       return NX.State.getValue('activeBundles').indexOf(symbolicName) > -1;
+    },
+    capabilityActive: function (typeName) {
+      return Ext.Array.contains(NX.State.getValue('capabilityActiveTypes'), typeName);
+    },
+    capabilityCreated: function (typeName) {
+      return Ext.Array.contains(NX.State.getValue('capabilityCreatedTypes'), typeName);
     }
   },
 
@@ -170,7 +196,9 @@ Ext.define('NX.app.Application', {
    * @param {NX.app.Application} app this class
    */
   init: function (app) {
-    var me = this;
+    var me = this,
+        csrfToken = Ext.util.Cookies.get('NX-ANTI-CSRF-TOKEN'),
+        basePath, hostname;
 
     //<if debug>
     me.logInfo('Initializing');
@@ -180,16 +208,27 @@ Ext.define('NX.app.Application', {
     // Configure blank image URL
     Ext.BLANK_IMAGE_URL = NX.util.Url.baseUrl + '/static/rapture/resources/images/s.gif';
 
-    Ext.Ajax.defaultHeaders = {
-      // HACK: Setting request header to allow analytics to tell if the request came from the UI or not
-      // HACK: This has some issues, will only catch ajax requests, etc... but may be fine for now
-      'X-Nexus-UI': 'true'
-    };
+    if (!csrfToken) {
+      basePath = NX.util.Url.baseUrl.substring(window.location.origin.length) || null;
+      hostname = window.location.hostname;
+      if ((Ext.isEdge || Ext.isIE) && hostname && hostname.indexOf('.') === -1) {
+        // IE & Edge won't set a cookie for domains without a TLD
+        hostname = null;
+      }
+      csrfToken = Math.random().toString();
+      Ext.util.Cookies.set('NX-ANTI-CSRF-TOKEN', csrfToken, null, basePath, hostname);
+    }
+
+    Ext.Ajax.setDefaultHeaders({
+      'X-Nexus-UI': 'true',
+      'NX-ANTI-CSRF-TOKEN': csrfToken
+    });
 
     app.initErrorHandler();
     app.initDirect();
     app.initState();
   },
+  // },
 
   /**
    * Hook into browser error handling (in order to log them).
@@ -266,6 +305,7 @@ Ext.define('NX.app.Application', {
     remotingProvider.maxRetries = 0;
 
     // default request timeout to 60 seconds
+    // note this will be overridden by UiSessionTimeout.js where we load the user config
     remotingProvider.timeout = 60 * 1000;
 
     //<if debug>

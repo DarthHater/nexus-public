@@ -23,10 +23,11 @@ Ext.define('NX.coreui.controller.UploadComponent', {
     'NX.Bookmarks',
     'NX.Conditions',
     'NX.Permissions',
-    'NX.I18n'
+    'NX.I18n',
+    'NX.controller.ExtDirect'
   ],
   masters: [
-    'nx-coreui-uploadcomponentfeature nx-coreui-browse-repository-list',
+    'nx-coreui-uploadcomponentfeature nx-coreui-upload-repository-list',
     'nx-coreui-uploadcomponentfeature nx-coreui-upload-component'
   ],
   stores: [
@@ -41,12 +42,12 @@ Ext.define('NX.coreui.controller.UploadComponent', {
   views: [
     'upload.UploadComponentFeature',
     'upload.UploadComponent',
-    'browse.BrowseRepositoryList'
+    'upload.UploadRepositoryList'
   ],
 
   refs: [
     {ref: 'feature', selector: 'nx-coreui-uploadcomponentfeature'},
-    {ref: 'repositoryList', selector: 'nx-coreui-uploadcomponentfeature nx-coreui-browse-repository-list'},
+    {ref: 'repositoryList', selector: 'nx-coreui-uploadcomponentfeature nx-coreui-upload-repository-list'},
     {ref: 'uploadComponent', selector: 'nx-coreui-uploadcomponentfeature nx-coreui-upload-component'},
     {ref: 'successMessage', selector: '#nx-coreui-upload-success-message'}
   ],
@@ -75,10 +76,7 @@ Ext.define('NX.coreui.controller.UploadComponent', {
       description: NX.I18n.get('FeatureGroups_Upload_Description'),
       view: 'NX.coreui.view.upload.UploadComponentFeature',
       group: false,
-      iconConfig: {
-        file: 'upload.png',
-        variants: ['x16', 'x32']
-      },
+      iconCls: 'x-fa fa-upload',
       authenticationRequired: false,
       visible: function() {
           return NX.Permissions.check('nexus:component:add');
@@ -94,7 +92,7 @@ Ext.define('NX.coreui.controller.UploadComponent', {
         }
       },
       component: {
-        'nx-coreui-uploadcomponentfeature nx-coreui-browse-repository-list': {
+        'nx-coreui-uploadcomponentfeature nx-coreui-upload-repository-list': {
           beforerender: me.onBeforeRender
         },
         'nx-coreui-upload-component button[action=remove_upload_asset]': {
@@ -109,7 +107,7 @@ Ext.define('NX.coreui.controller.UploadComponent', {
         'nx-coreui-upload-component button[action=add_asset]': {
           click: me.addAsset
         },
-        'nx-coreui-upload-component textfield[name^=extension]': {
+        'nx-coreui-upload-component textfield[name$=extension]': {
           change: me.onExtensionChange
         },
         'nx-coreui-upload-component checkbox[name=generate-pom]' : {
@@ -148,7 +146,7 @@ Ext.define('NX.coreui.controller.UploadComponent', {
     }
   },
 
-  loadView: function (index, animate, model) {
+  loadView: function (index, model) {
     this.callParent(arguments);
     if (model) {
         //redraw the panel after visible, to get around issue where file field can be drawn at invalid size
@@ -175,24 +173,26 @@ Ext.define('NX.coreui.controller.UploadComponent', {
 
     repoStore.removeAll();
 
-    this.getStore('UploadComponentDefinition').load(function (store, results) {
-        var formats = '';
-        results.getResultSet().records.forEach(function(record){
-            if (formats.length > 0) {
-                formats += ',';
-            }
-            formats += record.get('format');
+    this.getStore('UploadComponentDefinition').load(function (data) {
+        var formats = [];
+
+        data.forEach(function(def) {
+          formats.push(def.get('format'));
         });
 
         repoStore.addFilter([{
           property: 'format',
-          value: formats
+          filterFn: function(item) {
+            return formats.indexOf(item.get('format')) !== -1;
+          }
         }, {
           property: 'type',
           value: 'hosted'
         }, {
-          property: 'versionPolicies',
-          value: '!SNAPSHOT'
+          property: 'versionPolicy',
+          filterFn: function(item) {
+            return item.get('versionPolicy') == null || item.get('versionPolicy') !== 'SNAPSHOT';
+          }
         }]);
         repoStore.load(function () {
             // Load the asset upload page
@@ -221,15 +221,14 @@ Ext.define('NX.coreui.controller.UploadComponent', {
 
   doUpload: function(button) {
     var me = this,
-        fp = button.up('form'),
-        fileUploadField;
+        fp = button.up('form');
 
     if(fp.getForm().isValid()) {
       me.setSuccessMessage();
 
       fp.getForm().submit({
         waitMsg: NX.I18n.get('FeatureGroups_Upload_Wait_Message'),
-        success: function(form, action){
+        success: function(form, action) {
           var message = NX.I18n.format('FeatureGroups_Upload_Successful_Text', form.getValues().repositoryName);
           if (NX.Permissions.check('nexus:search:read')) {
             message += ", " + NX.util.Url.asLink(
@@ -237,19 +236,22 @@ Ext.define('NX.coreui.controller.UploadComponent', {
                 NX.I18n.get('FeatureGroups_Upload_Successful_Link_Text'), '_self');
           }
           me.setSuccessMessage(message);
+          me.resetForm();
+        },
+        failure: function(form, action) {
+          var transaction;
 
-          fp.getForm().reset();
-
-          // remove rows
-          fp.query('fileuploadfield').forEach(function(fileUploadField) {
-            me.removeUploadAsset(fileUploadField);
-          });
-
-          // create new row
-          me.addAsset();
-
-          // clearOnSubmit prevents normal form reset from working...
-          fp.down('fileuploadfield').inputEl.dom.value = '';
+          if (!action.result || !action.result.length) {
+            NX.Messages.error('An unknown error occurred uploading components');
+            console.error(action);
+          }
+          else {
+            transaction = {
+              result: action.result[0]
+            };
+            transaction.result.success = false;
+            NX.getApplication().getExtDirectController().checkResponse(null, transaction);
+          }
         }
       });
     }
@@ -270,7 +272,26 @@ Ext.define('NX.coreui.controller.UploadComponent', {
 
   discardUpload: function() {
     var me = this;
-    me.loadView(me.BROWSE_INDEX, true);
+    me.resetForm();
+    me.loadView(me.BROWSE_INDEX);
+  },
+
+  resetForm: function() {
+    var me = this,
+        form = me.getUploadComponent().down('form');
+
+    form.getForm().reset();
+
+    // remove rows
+    form.query('fileuploadfield').forEach(function(fileUploadField) {
+      me.removeUploadAsset(fileUploadField);
+    });
+
+    // create new row
+    me.addAsset();
+
+    // clearOnSubmit prevents normal form reset from working...
+    form.down('fileuploadfield').inputEl.dom.value = '';
   },
 
   addAsset: function() {
@@ -285,22 +306,29 @@ Ext.define('NX.coreui.controller.UploadComponent', {
   },
 
   onExtensionChange: function() {
-    var me = this;
+    var me = this,
+        form = me.getUploadComponent().down('form');
+
     me.updatePomFileState();
+    form.isValid();
   },
 
   updatePomFileState: function() {
     var me = this,
         form = me.getUploadComponent().down('form'),
-        componentFieldset = form.down('fieldset#nx-coreui-upload-component-fields'),
-        isPomFilePresent = form.query('textfield[name^=extension][value=pom]').length !== 0;
+        componentCoordinatesFieldset = form.down('fieldset[title="Component coordinates"]'),
+        isPomFilePresent = form.query('textfield[name$=extension][value=pom]').length !== 0;
 
-    componentFieldset.setDisabled(isPomFilePresent);
+    if (componentCoordinatesFieldset === null) {
+        return;
+    }
+
+    componentCoordinatesFieldset.setDisabled(isPomFilePresent);
     if (isPomFilePresent) {
-      componentFieldset.mask(NX.I18n.get('FeatureGroups_Upload_Form_DetailsFromPom_Mask'), 'nx-mask-without-spinner');
+      componentCoordinatesFieldset.mask(NX.I18n.get('FeatureGroups_Upload_Form_DetailsFromPom_Mask'), 'nx-mask-without-spinner');
     }
     else {
-      componentFieldset.unmask();
+      componentCoordinatesFieldset.unmask();
     }
   },
 

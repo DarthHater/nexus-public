@@ -23,7 +23,9 @@ Ext.define('NX.coreui.view.component.AssetList', {
   requires: [
     'NX.I18n'
   ],
-
+  mixins: {
+    componentUtils: 'NX.coreui.mixin.ComponentUtils'
+  },
   /**
    * Currently shown component model.
    */
@@ -33,7 +35,9 @@ Ext.define('NX.coreui.view.component.AssetList', {
    * @override
    */
   initComponent: function() {
-    Ext.apply(this, {
+    var me = this;
+
+    Ext.apply(me, {
       store: 'ComponentAsset',
 
       cls: 'nx-hr',
@@ -54,17 +58,15 @@ Ext.define('NX.coreui.view.component.AssetList', {
       columns: [
         {
           xtype: 'nx-iconcolumn',
-          dataIndex: 'contentType',
+          dataIndex: 'name',
           width: 36,
           iconVariant: 'x16',
-          iconNamePrefix: 'asset-type-',
           iconName: function(value) {
-            var assetType;
-
-            if (value) {
-              assetType = value.replace('/', '-');
-              if (NX.getApplication().getIconController().findIcon('asset-type-' + assetType, 'x16')) {
-                return assetType;
+            var icon = me.mixins.componentUtils.getIconForAssetName(value);
+            if (icon) {
+              var iconName = icon.get('name');
+              if (iconName) {
+                return iconName;
               }
             }
             return 'default';
@@ -73,12 +75,13 @@ Ext.define('NX.coreui.view.component.AssetList', {
         {
           text: NX.I18n.get('SearchResultAssetList_Name_Header'),
           dataIndex: 'name',
-          flex: 2.5
+          flex: 2.5,
+          renderer: Ext.htmlEncode
         }
       ]
     });
 
-    this.callParent();
+    me.callParent();
   },
 
   /**

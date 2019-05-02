@@ -19,6 +19,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -35,8 +37,8 @@ import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 
 import org.sonatype.goodies.common.ComponentSupport;
-import org.sonatype.nexus.common.encoding.EncodingUtil;
 import org.sonatype.nexus.common.entity.EntityId;
+import org.sonatype.nexus.common.template.EscapeHelper;
 import org.sonatype.nexus.common.template.TemplateHelper;
 import org.sonatype.nexus.common.template.TemplateParameters;
 import org.sonatype.nexus.common.text.Strings2;
@@ -97,6 +99,8 @@ public class RepositoryBrowseResource
 
   private final BucketStore bucketStore;
 
+  private final EscapeHelper escapeHelper = new EscapeHelper();
+
   @Inject
   public RepositoryBrowseResource(final RepositoryManager repositoryManager,
                                   final BrowseNodeStore browseNodeStore,
@@ -137,7 +141,7 @@ public class RepositoryBrowseResource
     List<String> pathSegments = new ArrayList<>();
 
     if (!isRoot(repositoryPath)) {
-      pathSegments = asList(EncodingUtil.urlDecode(repositoryPath.split("/")));
+      pathSegments = asList(repositoryPath.split("/"));
     }
 
     Iterable<BrowseNode> browseNodes = browseNodeStore
@@ -179,7 +183,7 @@ public class RepositoryBrowseResource
 
     if (browseNodes != null) {
       SimpleDateFormat format = new SimpleDateFormat("EEE MMM dd HH:mm:ss zzz yyyy");
-      for (BrowseNode browseNode : sort(browseNodes)) {
+      for (BrowseNode browseNode : browseNodes) {
         String size = null;
         String lastModified = null;
         String listItemPath;
@@ -230,23 +234,6 @@ public class RepositoryBrowseResource
     });
   }
 
-  private Iterable<BrowseNode> sort(final Iterable<BrowseNode> nodes) {
-    List<BrowseNode> sortedBrowseNodes = new ArrayList<>();
-    nodes.forEach(sortedBrowseNodes::add);
-
-    sortedBrowseNodes.sort((o1, o2) -> {
-      if (o1.getAssetId() == null && o2.getAssetId() != null) {
-        return -1;
-      }
-      else if (o2.getAssetId() == null && o1.getAssetId() != null) {
-        return 1;
-      }
-      return Strings2.lower(o1.getName()).compareTo(Strings2.lower(o2.getName()));
-    });
-
-    return sortedBrowseNodes;
-  }
-
   private TemplateParameters initializeTemplateParameters(final String repositoryName, final String path, final List<BrowseListItem> listItems) {
     TemplateParameters templateParameters = templateHelper.parameters();
 
@@ -275,13 +262,20 @@ public class RepositoryBrowseResource
                                  final Asset asset,
                                  final String filter)
   {
+    final String listItemPath;
     String filterParam = filter == null ? "" : "?filter=" + URLEncoder.encode(filter);
 
     if (asset == null) {
-      return urlEncode(browseNode.getName()) + "/" + filterParam;
+      listItemPath = escapeHelper.uri(browseNode.getName()) + "/" + filterParam;
+    }
+    else {
+      listItemPath = repository.getUrl() + "/" +
+          Stream.of(asset.name().split("/"))
+              .map(escapeHelper::uri)
+              .collect(Collectors.joining("/"));
     }
 
-    return repository.getUrl() + "/" + asset.name();
+    return listItemPath;
   }
 
   private boolean isRoot(final String path) {

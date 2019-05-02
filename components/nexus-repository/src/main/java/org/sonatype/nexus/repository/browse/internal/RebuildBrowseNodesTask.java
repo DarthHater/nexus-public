@@ -31,6 +31,7 @@ import org.sonatype.nexus.repository.storage.AssetEntityAdapter;
 import org.sonatype.nexus.repository.storage.AssetStore;
 import org.sonatype.nexus.repository.storage.Bucket;
 import org.sonatype.nexus.repository.storage.BucketStore;
+import org.sonatype.nexus.scheduling.Cancelable;
 import org.sonatype.nexus.scheduling.TaskInterruptedException;
 
 import com.google.common.base.Stopwatch;
@@ -50,6 +51,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 @Named
 public class RebuildBrowseNodesTask
     extends RepositoryTaskSupport
+    implements Cancelable
 {
   private static final int BUCKET_KEY_ID = 0;
 
@@ -81,7 +83,11 @@ public class RebuildBrowseNodesTask
   @Override
   protected void execute(final Repository repo) {
 
+    log.info("Deleting browse nodes for repository {}", repo.getName());
+
     browseNodeManager.deleteByRepository(repo.getName());
+
+    log.info("Rebuilding browse nodes for repository {}", repo.getName());
 
     Bucket bucket = bucketStore.read(repo.getName());
     ORID bucketId = AttachedEntityHelper.id(bucket);
@@ -93,7 +99,6 @@ public class RebuildBrowseNodesTask
       if (total > 0) {
         ProgressLogIntervalHelper progressLogger = new ProgressLogIntervalHelper(log, 60);
         Stopwatch sw = Stopwatch.createStarted();
-        long lastTime = sw.elapsed(TimeUnit.MILLISECONDS);
 
         OIndexCursor cursor = assetStore.getIndex(AssetEntityAdapter.I_BUCKET_COMPONENT_NAME).cursor();
         List<Entry<OCompositeKey, EntityId>> nextPage = assetStore.getNextPage(cursor, rebuildPageSize);
@@ -114,10 +119,7 @@ public class RebuildBrowseNodesTask
           processed += assetsSize;
 
           long elapsed = sw.elapsed(TimeUnit.MILLISECONDS);
-          progressLogger.info("rebuilding tree for {} assets took {} ms of {} ms, {} / {} assets processed", assetsSize,
-              elapsed - lastTime, elapsed, processed, total);
-
-          lastTime = sw.elapsed(TimeUnit.MILLISECONDS);
+          progressLogger.info("Rebuilt {} / {} browse nodes in {} ms", processed, total, elapsed);
 
           nextPage = assetStore.getNextPage(cursor, rebuildPageSize);
         }

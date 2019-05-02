@@ -15,6 +15,7 @@ package org.sonatype.nexus.repository.httpclient.internal;
 import java.io.IOException;
 
 import org.sonatype.goodies.testsupport.TestSupport;
+import org.sonatype.nexus.repository.httpclient.AutoBlockConfiguration;
 import org.sonatype.nexus.repository.httpclient.FilteredHttpClientSupport.Filterable;
 import org.sonatype.nexus.repository.httpclient.RemoteConnectionStatus;
 import org.sonatype.nexus.repository.httpclient.RemoteConnectionStatusObserver;
@@ -25,6 +26,8 @@ import org.apache.http.HttpHost;
 import org.apache.http.StatusLine;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.protocol.HttpContext;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -37,6 +40,7 @@ import static org.apache.http.HttpStatus.SC_UNAUTHORIZED;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
 import static org.hamcrest.core.IsEqual.equalTo;
+import static org.joda.time.DateTime.now;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -67,6 +71,9 @@ public class BlockingHttpClientTest
 
   @Mock
   StatusLine statusLine;
+  
+  @Mock
+  AutoBlockConfiguration autoBlockConfiguration;
 
   HttpHost httpHost;
 
@@ -77,8 +84,20 @@ public class BlockingHttpClientTest
     when(filterable.call()).thenReturn(httpResponse);
     when(httpResponse.getStatusLine()).thenReturn(statusLine);
     when(statusLine.getStatusCode()).thenReturn(SC_OK);
+    
+    when(autoBlockConfiguration.shouldBlock(SC_UNAUTHORIZED)).thenReturn(true);
+    when(autoBlockConfiguration.shouldBlock(SC_BAD_GATEWAY)).thenReturn(true);
+    when(autoBlockConfiguration.shouldBlock(SC_PROXY_AUTHENTICATION_REQUIRED)).thenReturn(true);
+    
     httpHost = HttpHost.create("localhost");
-    underTest = new BlockingHttpClient(httpClient, new Config(), statusObserver, true);
+    underTest = new BlockingHttpClient(httpClient, new Config(), statusObserver, true, autoBlockConfiguration);
+  }
+
+  @After
+  public void teardown() throws IOException {
+    if (underTest != null) {
+      underTest.close();
+    }
   }
 
   @Test
@@ -86,10 +105,36 @@ public class BlockingHttpClientTest
     Config config = new Config();
     config.blocked = true;
     reset(statusObserver);
-    new BlockingHttpClient(httpClient, config, statusObserver, true);
+    BlockingHttpClient client = new BlockingHttpClient(httpClient, config, statusObserver, true,
+        autoBlockConfiguration);
+    client.close();
     ArgumentCaptor<RemoteConnectionStatus> newStatusCaptor = ArgumentCaptor.forClass(RemoteConnectionStatus.class);
     verify(statusObserver).onStatusChanged(any(), newStatusCaptor.capture());
     assertThat(newStatusCaptor.getValue().getType(), is(equalTo(BLOCKED)));
+  }
+
+  @Test
+  public void autoblockWontLeaveStatusThreadInterrupted() throws Exception {
+    when(httpClient.execute(any(HttpHost.class), any(), any(HttpContext.class))).thenReturn(httpResponse);
+    when(httpResponse.getStatusLine()).thenReturn(statusLine);
+    when(statusLine.getStatusCode()).thenReturn(SC_BAD_GATEWAY);
+
+    Config config = new Config();
+    config.autoBlock = true;
+
+    boolean[] statusThreadLeftInterrupted = new boolean[1];
+
+    BlockingHttpClient client = new BlockingHttpClient(httpClient, config,
+        (oldStatus, newStatus) -> statusThreadLeftInterrupted[0] = Thread.currentThread().isInterrupted(),
+        true, autoBlockConfiguration);
+
+    client.scheduleCheckStatus(httpHost.toURI(), now().plusMillis(100));
+
+    Thread.sleep(500);
+
+    assertThat(statusThreadLeftInterrupted[0], is(false));
+
+    client.close();
   }
 
   @Test
@@ -179,10 +224,19 @@ public class BlockingHttpClientTest
 
   @Test
   public void setStatusToOfflineWhenPassed() throws Exception {
-    underTest = new BlockingHttpClient(httpClient, new Config(), statusObserver, false);
+    underTest = new BlockingHttpClient(httpClient, new Config(), statusObserver, false, autoBlockConfiguration);
     ArgumentCaptor<RemoteConnectionStatus> newStatusCaptor = ArgumentCaptor.forClass(RemoteConnectionStatus.class);
     verify(statusObserver, times(2)).onStatusChanged(any(), newStatusCaptor.capture());
     assertThat(newStatusCaptor.getAllValues().get(1).getType(), is(equalTo(OFFLINE)));
+  }
+  
+  @Test
+  public void shouldNotBlockWhenConfigurationNotSet() throws Exception {
+    when(autoBlockConfiguration.shouldBlock(SC_UNAUTHORIZED)).thenReturn(false);
+    
+    when(statusLine.getStatusCode()).thenReturn(SC_UNAUTHORIZED);
+    filterAndHandleException();
+    verifyUpdateStatus(AVAILABLE);
   }
 
   private void verifyUpdateStatus(final RemoteConnectionStatusType newType) {

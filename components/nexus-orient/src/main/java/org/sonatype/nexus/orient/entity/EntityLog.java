@@ -21,8 +21,10 @@ import java.util.Set;
 
 import javax.inject.Provider;
 
+import org.sonatype.nexus.common.property.SystemPropertiesHelper;
 import org.sonatype.nexus.orient.DatabaseInstance;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.orientechnologies.common.exception.OHighLevelException;
@@ -50,6 +52,11 @@ import static com.orientechnologies.orient.core.storage.impl.local.paginated.ORe
  */
 public final class EntityLog
 {
+  @VisibleForTesting
+  static final String ENTITY_LOG_LIMIT_KEY = "nexus.orient.entityLog.limit";
+
+  private final int entityLogLimit = SystemPropertiesHelper.getInteger(ENTITY_LOG_LIMIT_KEY, 1000);
+
   private final boolean hasRecordIds = STORAGE_TRACK_CHANGED_RECORDS_IN_WAL.getValueAsBoolean();
 
   private final Provider<DatabaseInstance> databaseProvider;
@@ -109,12 +116,12 @@ public final class EntityLog
   private OLocalPaginatedStorage storage() {
     if (storage == null || storage.isClosed()) {
       // use temp TX to get local storage; note we don't need a TX when reading write-ahead-log
-      ODatabaseDocumentInternal currentDb = ODatabaseRecordThreadLocal.INSTANCE.getIfDefined();
+      ODatabaseDocumentInternal currentDb = ODatabaseRecordThreadLocal.instance().getIfDefined();
       try (ODatabaseDocumentInternal db = databaseProvider.get().acquire()) {
         storage = (OLocalPaginatedStorage) db.getStorage().getUnderlying();
       }
       finally {
-        ODatabaseRecordThreadLocal.INSTANCE.set(currentDb);
+        ODatabaseRecordThreadLocal.instance().set(currentDb);
       }
     }
     return storage;
@@ -143,6 +150,9 @@ public final class EntityLog
         OWALRecord record = wal.read(lsn);
         if (record instanceof OAtomicUnitEndRecord) {
           extractDelta((OAtomicUnitEndRecord) record).forEach(rid -> result.computeIfAbsent(rid, adapterIndex::lookup));
+          if (entityLogLimit >= 0 && result.size() > entityLogLimit) {
+            throw new IOException("Too many changes to return");
+          }
         }
         lsn = wal.next(lsn);
       }

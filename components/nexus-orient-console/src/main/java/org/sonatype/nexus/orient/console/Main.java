@@ -18,12 +18,14 @@ import org.sonatype.nexus.crypto.CryptoHelper;
 import org.sonatype.nexus.crypto.PbeCipherFactory;
 import org.sonatype.nexus.crypto.internal.CryptoHelperImpl;
 import org.sonatype.nexus.crypto.internal.PbeCipherFactoryImpl;
+import org.sonatype.nexus.orient.entity.ConflictHook;
 import org.sonatype.nexus.orient.internal.PbeCompression;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.orient.console.OConsoleDatabaseApp;
+import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.compression.OCompressionFactory;
 import org.eclipse.sisu.wire.WireModule;
 
@@ -52,8 +54,11 @@ public class Main
       binder.bind(PbeCompression.class);
     }));
 
-    // enable support for PBE compression; needed to work with the security database
+    // register support for PBE compression; needed to work with the security database
     OCompressionFactory.INSTANCE.register(injector.getInstance(PbeCompression.class));
+
+    // register 'ConflictHook' strategy but leave it disabled; needed to load databases that set it as a strategy
+    Orient.instance().getRecordConflictStrategy().registerImplementation(ConflictHook.NAME, new ConflictHook(false));
 
     OConsoleDatabaseApp.main(args);
   }

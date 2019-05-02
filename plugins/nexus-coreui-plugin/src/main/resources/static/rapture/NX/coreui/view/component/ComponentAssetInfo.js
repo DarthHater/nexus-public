@@ -22,8 +22,14 @@ Ext.define('NX.coreui.view.component.ComponentAssetInfo', {
   alias: 'widget.nx-coreui-component-componentassetinfo',
   requires: [
     'NX.I18n',
-    'NX.coreui.util.RepositoryUrls'
+    'NX.coreui.util.RepositoryUrls',
+    'NX.ext.button.Button',
+    'NX.view.info.DependencySnippetPanel'
   ],
+
+  mixins: {
+    componentUtils: 'NX.coreui.mixin.ComponentUtils'
+  },
 
   autoScroll: true,
   cls: 'nx-coreui-component-componentassetinfo',
@@ -32,20 +38,31 @@ Ext.define('NX.coreui.view.component.ComponentAssetInfo', {
     xtype: 'nx-actions',
     items: [
       {
-        xtype: 'button',
+        xtype: 'nx-button',
+        text: NX.I18n.get('FolderInfo_Delete_Button'),
+        glyph: 'xf1f8@FontAwesome' /* fa-trash */,
+        action: 'deleteFolder',
+        hidden: true
+      }, {
+        xtype: 'nx-button',
         text: NX.I18n.get('AssetInfo_Delete_Button'),
-        glyph: 'xf056@FontAwesome' /* fa-minus-circle */,
+        glyph: 'xf1f8@FontAwesome' /* fa-trash */,
         action: 'deleteAsset',
         hidden: true
       }
     ]
   },
 
+  referenceHolder: true,
+
   items: [{
     xtype: 'nx-info-panel',
-    itemId: 'summaryPanel',
+    reference: 'summaryPanel',
     titled: 'Summary',
     collapsible: true
+  }, {
+    xtype: 'nx-info-dependency-snippet-panel',
+    reference: 'dependencySnippetPanel'
   }, {
     xtype: 'panel',
     ui: 'nx-inset',
@@ -54,57 +71,86 @@ Ext.define('NX.coreui.view.component.ComponentAssetInfo', {
     manageHeight: false,
     items: [{
       xtype: 'nx-coreui-component-assetattributes',
-      itemId: 'attributesPanel'
+      reference: 'attributesPanel'
     }]
   }],
 
-  summary: {},
+  savedInfo: {},
 
   setModel: function(asset, component) {
-    var me = this,
-        summary = me.summary,
+    var me = this;
+
+    var computedInfo = {},
         contentType = asset.get('contentType'),
-        size = asset.get('size');
+        size = asset.get('size'),
+        attributesPanel = this.lookup('attributesPanel'),
+        titleText;
 
-    me.assetModel = asset;
-    me.componentModel = component;
+    this.assetModel = asset;
+    this.componentModel = component;
 
-    summary[NX.I18n.get('Assets_Info_Repository')] = asset.get('repositoryName');
-    summary[NX.I18n.get('Assets_Info_Format')] = asset.get('format');
-    summary[NX.I18n.get('Assets_Info_Group')] = component.get('group');
-    summary[NX.I18n.get('Assets_Info_Name')] = component.get('name');
-    summary[NX.I18n.get('Assets_Info_Version')] = component.get('version');
-    summary[NX.I18n.get('Assets_Info_Path')] = NX.coreui.util.RepositoryUrls.asRepositoryLink(asset, asset.get('format'));
-    summary[NX.I18n.get('Assets_Info_ContentType')] = contentType;
-    summary[NX.I18n.get('Assets_Info_FileSize')] = Ext.util.Format.fileSize(size);
-    summary[NX.I18n.get('Assets_Info_Blob_Created')] = asset.get('blobCreated');
-    summary[NX.I18n.get('Assets_Info_Blob_Updated')] = asset.get('blobUpdated');
-    summary[NX.I18n.get('Assets_Info_Downloaded_Count')] = asset.get('downloadCount') + ' '
-            + NX.I18n.get('Assets_Info_Downloaded_Unit');
-    summary[NX.I18n.get('Assets_Info_Last_Downloaded')] = Ext.Date.format(asset.get('lastDownloaded'), 'D M d Y');
-    summary[NX.I18n.get('Assets_Info_Locally_Cached')] = contentType !== 'unknown' && size > 0;
-    summary[NX.I18n.get('Assets_Info_BlobRef')] = asset.get('blobRef');
-    summary[NX.I18n.get('Assets_Info_ContainingRepositoryName')] = asset.get('containingRepositoryName');
+    computedInfo[NX.I18n.get('Assets_Info_Repository')] = Ext.htmlEncode(asset.get('repositoryName'));
+    computedInfo[NX.I18n.get('Assets_Info_Format')] = Ext.htmlEncode(asset.get('format'));
+    computedInfo[NX.I18n.get('Assets_Info_Group')] = Ext.htmlEncode(component.get('group'));
+    computedInfo[NX.I18n.get('Assets_Info_Name')] = Ext.htmlEncode(component.get('name'));
+    computedInfo[NX.I18n.get('Assets_Info_Version')] = Ext.htmlEncode(component.get('version'));
+    computedInfo[NX.I18n.get('Assets_Info_Path')] = NX.coreui.util.RepositoryUrls.asRepositoryLink(asset, asset.get('format'));
+    computedInfo[NX.I18n.get('Assets_Info_ContentType')] = Ext.htmlEncode(contentType);
+    computedInfo[NX.I18n.get('Assets_Info_FileSize')] = Ext.util.Format.fileSize(size);
+    computedInfo[NX.I18n.get('Assets_Info_Blob_Created')] = Ext.htmlEncode(asset.get('blobCreated'));
+    computedInfo[NX.I18n.get('Assets_Info_Blob_Updated')] = Ext.htmlEncode(asset.get('blobUpdated'));
 
-    summary[NX.I18n.get('Assets_Info_UploadedBy')] = asset.get('createdBy');
-    summary[NX.I18n.get('Assets_Info_UploadedIp')] = asset.get('createdByIp');
+    if (asset.get('downloadCount')) {
+      computedInfo[NX.I18n.get('Assets_Info_Downloaded_Count')] = Ext.htmlEncode(asset.get('downloadCount')) + ' '
+          + NX.I18n.get('Assets_Info_Downloaded_Unit');
+    }
 
-    this.down('#summaryPanel').showInfo(summary);
-    this.down('#attributesPanel').setAssetModel(asset);
+    computedInfo[NX.I18n.get('Assets_Info_Last_Downloaded')] = Ext.htmlEncode(
+        me.mixins.componentUtils.getLastDownloadDateForDisplay(asset));
+    computedInfo[NX.I18n.get('Assets_Info_Locally_Cached')] = Ext.htmlEncode(contentType !== 'unknown' && size > 0);
+    computedInfo[NX.I18n.get('Assets_Info_BlobRef')] = Ext.htmlEncode(asset.get('blobRef'));
+    computedInfo[NX.I18n.get('Assets_Info_ContainingRepositoryName')] = Ext.htmlEncode(asset.get('containingRepositoryName'));
 
-    this.setTitle(asset.get('name'));
+    computedInfo[NX.I18n.get('Assets_Info_UploadedBy')] = Ext.htmlEncode(asset.get('createdBy'));
+    computedInfo[NX.I18n.get('Assets_Info_UploadedIp')] = Ext.htmlEncode(asset.get('createdByIp'));
 
-    this.fireEvent('update', this, asset, component);
+    if (attributesPanel) {
+      attributesPanel.setAssetModel(asset);
+    }
+
+    this.showInfo(Ext.apply({}, this.savedInfo, computedInfo));
+
+    titleText = Ext.htmlEncode(asset.get('name'));
+    this.setTitle({
+      text: titleText,
+      listeners: {
+        destroy: function(me) {
+          Ext.tip.QuickTipManager.unregister(me.getId());
+        }
+      }
+    });
+
+    // title is already rendered at this point so can't use afterrender event here
+    Ext.tip.QuickTipManager.register({
+      target: this.down('title').getId(),
+      text: titleText
+    });
+
+    this.fireEvent('updated', this, asset, component);
   },
 
   setInfo: function(section, key, value) {
-    this.summary[key] = value;
+    this.savedInfo[key] = value;
   },
 
-  showInfo: function() {
-    if(this.down('#summaryPanel')) {
-      this.down('#summaryPanel').showInfo(this.summary);
+  showInfo: function(info) {
+    var summaryPanel = this.lookup('summaryPanel');
+    if (summaryPanel) {
+      summaryPanel.showInfo(info);
     }
-  }
+  },
 
+  getDependencySnippetPanel: function() {
+    return this.lookup('dependencySnippetPanel');
+  }
 });

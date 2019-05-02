@@ -34,7 +34,7 @@ Ext.define('NX.coreui.view.formfield.factory.FormfieldItemselectFactory', {
   /**
    * Create control.
    */
-  create: function (formField) {
+  create: function (formField, disableSort) {
     var filters,
         attributes = formField['attributes'] || {},
         idMapping = formField['idMapping'] || 'id',
@@ -46,6 +46,7 @@ Ext.define('NX.coreui.view.formfield.factory.FormfieldItemselectFactory', {
           name: formField.id,
           valueField: idMapping,
           displayField: nameMapping,
+          width:600,
 
           itemCls: formField.required ? 'required-field' : '',
           allowBlank: !formField.required,
@@ -83,7 +84,7 @@ Ext.define('NX.coreui.view.formfield.factory.FormfieldItemselectFactory', {
         });
       }
 
-      itemConfig.store = Ext.create('Ext.data.Store', {
+      var args = {
         proxy: {
           type: 'direct',
           api: {
@@ -91,7 +92,7 @@ Ext.define('NX.coreui.view.formfield.factory.FormfieldItemselectFactory', {
           },
           reader: {
             type: 'json',
-            root: 'data',
+            rootProperty: 'data',
             idProperty: idMapping,
             successProperty: 'success'
           }
@@ -107,7 +108,13 @@ Ext.define('NX.coreui.view.formfield.factory.FormfieldItemselectFactory', {
         sorters: { property: nameMapping, direction: 'ASC' },
         remoteFilter: true,
         autoLoad: true
-      });
+      };
+
+      if (disableSort) {
+        delete args.sortOnLoad;
+        delete args.sorters;
+      }
+      itemConfig.store = Ext.create('Ext.data.Store', args);
     }
 
     return Ext.create('NX.ext.form.field.ItemSelector', itemConfig);

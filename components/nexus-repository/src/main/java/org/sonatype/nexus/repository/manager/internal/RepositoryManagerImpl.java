@@ -15,6 +15,7 @@ package org.sonatype.nexus.repository.manager.internal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -62,6 +63,7 @@ import com.google.common.eventbus.Subscribe;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Optional.ofNullable;
 import static java.util.stream.StreamSupport.stream;
 import static org.sonatype.nexus.blobstore.api.BlobStoreManager.DEFAULT_BLOBSTORE_NAME;
 import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.SERVICES;
@@ -86,6 +88,10 @@ public class RepositoryManagerImpl
     extends StateGuardLifecycleSupport
     implements RepositoryManager, EventAware
 {
+  public static final String CLEANUP_ATTRIBUTES_KEY = "cleanup";
+
+  public static final String CLEANUP_NAME_KEY = "policyName";
+
   private final DatabaseFreezeService databaseFreezeService;
 
   private final EventManager eventManager;
@@ -108,6 +114,8 @@ public class RepositoryManagerImpl
 
   private final BlobStoreManager blobStoreManager;
 
+  private final GroupMemberMappingCache groupMemberMappingCache;
+
   @Inject
   public RepositoryManagerImpl(final EventManager eventManager,
                                final ConfigurationStore store,
@@ -118,7 +126,8 @@ public class RepositoryManagerImpl
                                final List<DefaultRepositoriesContributor> defaultRepositoriesContributors,
                                final DatabaseFreezeService databaseFreezeService,
                                @Named("${nexus.skipDefaultRepositories:-false}") final boolean skipDefaultRepositories,
-                               final BlobStoreManager blobStoreManager)
+                               final BlobStoreManager blobStoreManager,
+                               final GroupMemberMappingCache groupMemberMappingCache)
   {
     this.eventManager = checkNotNull(eventManager);
     this.store = checkNotNull(store);
@@ -130,6 +139,7 @@ public class RepositoryManagerImpl
     this.databaseFreezeService = checkNotNull(databaseFreezeService);
     this.skipDefaultRepositories = skipDefaultRepositories;
     this.blobStoreManager = checkNotNull(blobStoreManager);
+    this.groupMemberMappingCache = checkNotNull(groupMemberMappingCache);
   }
 
   /**
@@ -205,6 +215,8 @@ public class RepositoryManagerImpl
   @Override
   protected void doStart() throws Exception {
     blobStoreManager.start();
+
+    groupMemberMappingCache.init(this);
 
     List<Configuration> configurations = store.list();
 
@@ -385,6 +397,22 @@ public class RepositoryManagerImpl
     eventManager.post(new RepositoryDeletedEvent(repository));
   }
 
+  /**
+   * Retrieve a list of all groups that contain the desired repository, either directly or transitively through
+   * another group.
+   *
+   * @since 3.14
+   *
+   * @param repositoryName
+   * @return List of group(s) that contain the supplied repository.  Ordered from closest to the repo to farthest away
+   * i.e. if group A contains group B which contains repo C the returned list would be ordered B,A
+   */
+  @Override
+  @Guarded(by = STARTED)
+  public List<String> findContainingGroups(final String repositoryName) {
+    return groupMemberMappingCache.getGroups(repositoryName);
+  }
+
   private void removeRepositoryFromAllGroups(final Repository repositoryToRemove) throws Exception {
     for (Repository group : repositories.values()) {
         Optional<GroupFacet> groupFacet = group.optionalFacet(GroupFacet.class);
@@ -411,12 +439,19 @@ public class RepositoryManagerImpl
 
   @Override
   public boolean isBlobstoreUsed(final String blobStoreName) {
-    return blobstoreUsageStream(blobStoreName).findAny().isPresent();
+    return blobstoreUsageStream(blobStoreName).findAny().isPresent() ||
+        blobStoreManager.blobStoreUsageCount(blobStoreName) > 0;
   }
 
   @Override
   public long blobstoreUsageCount(final String blobStoreName) {
     return blobstoreUsageStream(blobStoreName).count();
+  }
+
+  @Override
+  public Stream<Repository> browseForCleanupPolicy(final String cleanupPolicyName) {
+    return stream(browse().spliterator(), false)
+        .filter(repository -> repositoryHasCleanupPolicy(repository, cleanupPolicyName));
   }
 
   @Subscribe
@@ -454,5 +489,15 @@ public class RepositoryManagerImpl
     else {
       log.debug("Not posting metadata update event for deleted repository {}", event.getRepositoryName());
     }
+  }
+
+  private boolean repositoryHasCleanupPolicy(final Repository repository, final String cleanupPolicyName) {
+    return ofNullable(repository.getConfiguration())
+        .map(Configuration::getAttributes)
+        .map(attributes -> attributes.get(CLEANUP_ATTRIBUTES_KEY))
+        .filter(Objects::nonNull)
+        .map(cleanupPolicyMap -> cleanupPolicyMap.get(CLEANUP_NAME_KEY))
+        .filter(cleanupPolicyName::equals)
+        .isPresent();
   }
 }

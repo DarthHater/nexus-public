@@ -13,7 +13,11 @@
 package org.sonatype.nexus.repository.npm.internal;
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map.Entry;
+import java.util.Set;
 
 import javax.inject.Named;
 
@@ -42,57 +46,62 @@ public class NpmHostedComponentMaintenanceImpl
 {
   @Override
   @TransactionalDeleteBlob
-  protected void deleteComponentTx(final EntityId componentId, final boolean deleteBlobs) {
+  protected DeletionResult deleteComponentTx(final EntityId componentId, final boolean deleteBlobs) {
     StorageTx tx = UnitOfWork.currentTx();
     Component component = tx.findComponentInBucket(componentId, tx.findBucket(getRepository()));
     if (component == null) {
-      return;
+      return new DeletionResult(null, Collections.emptySet());
     }
-    tx.browseAssets(component).forEach(a -> deleteAssetTx(a, deleteBlobs));
+    Set<String> deletedAssets = new HashSet<>();
+    tx.browseAssets(component).forEach(a -> deletedAssets.addAll(deleteAssetTx(a, deleteBlobs)));
+    return new DeletionResult(component, deletedAssets);
   }
 
   /**
    * Deletes depending on what it is.
    */
   @TransactionalDeleteBlob
-  protected void deleteAssetTx(final EntityId assetId, final boolean deleteBlob) {
+  protected Set<String> deleteAssetTx(final EntityId assetId, final boolean deleteBlob) {
     StorageTx tx = UnitOfWork.currentTx();
     Asset asset = tx.findAsset(assetId, tx.findBucket(getRepository()));
     if (asset == null) {
-      return;
+      return Collections.emptySet();
     }
-    deleteAssetTx(asset, deleteBlob);
+    return deleteAssetTx(asset, deleteBlob);
   }
 
-  private void deleteAssetTx(final Asset asset, final boolean deleteBlob) {
+  private Set<String> deleteAssetTx(final Asset asset, final boolean deleteBlob) {
     AssetKind assetKind = AssetKind.valueOf(asset.formatAttributes().get(P_ASSET_KIND, String.class));
+    Set<String> deletedAssets = new HashSet<>();
     try {
       if (AssetKind.PACKAGE_ROOT == assetKind) {
         NpmPackageId packageId = NpmPackageId.parse(asset.name());
-        deletePackageRoot(packageId, deleteBlob);
+        deletedAssets.addAll(deletePackageRoot(packageId, deleteBlob));
       }
       else if (AssetKind.TARBALL == assetKind) {
         NpmPackageId packageId = NpmPackageId.parse(asset.name().substring(0, asset.name().indexOf("/-/")));
         String tarballName = NpmMetadataUtils.extractTarballName(asset.name());
-        deleteTarball(packageId, tarballName, deleteBlob);
+        deletedAssets.addAll(deleteTarball(packageId, tarballName, deleteBlob));
       }
     }
     catch (IOException e) {
       throw new RuntimeException(e);
     }
+
+    return deletedAssets;
   }
 
   /**
    * Deletes package and all related tarballs too.
    */
-  private boolean deletePackageRoot(final NpmPackageId packageId, final boolean deleteBlob) throws IOException {
+  private Set<String> deletePackageRoot(final NpmPackageId packageId, final boolean deleteBlob) throws IOException {
     return getRepository().facet(NpmHostedFacet.class).deletePackage(packageId, null, deleteBlob);
   }
 
   /**
    * Deletes tarball and updates package root.
    */
-  private boolean deleteTarball(final NpmPackageId packageId, final String tarballName, final boolean deleteBlob)
+  private Set<String> deleteTarball(final NpmPackageId packageId, final String tarballName, final boolean deleteBlob)
       throws IOException
   {
     final StorageTx tx = UnitOfWork.currentTx();
@@ -100,22 +109,23 @@ public class NpmHostedComponentMaintenanceImpl
         tx, tx.findBucket(getRepository()), packageId
     );
     if (packageRootAsset == null) {
-      return false;
+      return Collections.emptySet();
     }
     NestedAttributesMap packageRoot = NpmFacetUtils.loadPackageRoot(tx, packageRootAsset);
     NestedAttributesMap version = NpmMetadataUtils.selectVersionByTarballName(packageRoot, tarballName);
     if (version == null) {
-      return false;
+      return Collections.emptySet();
     }
     packageRoot.child(NpmMetadataUtils.VERSIONS).remove(version.getKey());
     if (packageRoot.child(NpmMetadataUtils.VERSIONS).isEmpty()) {
       return getRepository().facet(NpmHostedFacet.class).deletePackage(packageId, null, deleteBlob);
     }
     else {
-      NestedAttributesMap distTags = packageRoot.child(NpmMetadataUtils.DIST_TAGS);
-      for (Entry<String, Object> distTag : distTags) {
+      Iterator<Entry<String, Object>> distTags = packageRoot.child(NpmMetadataUtils.DIST_TAGS).iterator();
+      while (distTags.hasNext()) {
+        Entry<String, Object> distTag = distTags.next();
         if (version.getKey().equals(distTag.getValue())) {
-          distTags.remove(distTag.getKey());
+          distTags.remove();
         }
       }
       packageRoot.child(NpmMetadataUtils.TIME).remove(version.getKey());

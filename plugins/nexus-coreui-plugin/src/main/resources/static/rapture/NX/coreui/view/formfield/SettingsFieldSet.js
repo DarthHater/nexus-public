@@ -36,6 +36,21 @@ Ext.define('NX.coreui.view.formfield.SettingsFieldSet', {
     logAware: 'NX.LogAware'
   },
 
+  plugins: {
+    responsive:true
+  },
+  responsiveConfig: {
+    'width <= 1366': {
+      width: 600
+    },
+    'width <= 1600': {
+      width: 800
+    },
+    'width > 1600' : {
+      width: 1000
+    }
+  },
+
   /**
    * @override
    */
@@ -77,11 +92,24 @@ Ext.define('NX.coreui.view.formfield.SettingsFieldSet', {
           factory = Ext.ClassManager.getByAlias('nx.formfield.factory.string');
         }
         if (factory) {
-          item = Ext.apply(factory.create(formField), {
+          var config = {
             requiresPermission: true,
             name: 'property_' + formField.id,
-            factory: factory
-          });
+            factory: factory,
+            delimiter: me.delimiter,
+            listeners: {
+              afterrender: {
+                fn: function() {
+                  // fixes an issue with hidden validation errors when the error is added before the field is rendered
+                  this.validate();
+                }
+              }
+            }
+          };
+          if (Ext.isDefined(me.delimiter)) {
+            config.delimiter = me.delimiter;
+          }
+          item = Ext.apply(factory.create(formField, me.disableSort), config);
           me.add(item);
         }
       });
@@ -102,7 +130,11 @@ Ext.define('NX.coreui.view.formfield.SettingsFieldSet', {
       Ext.Array.each(me.formFields, function (formField) {
         value = values['property_' + formField.id];
         if (Ext.isDefined(value) && value !== null) {
-          properties[formField.id] = String(value);
+          if (Ext.isArray(value)) {
+            properties[formField.id] = value;
+          } else {
+            properties[formField.id] = String(value);
+          }
           delete values['property_' + formField.id];
         }
         else {

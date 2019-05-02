@@ -18,7 +18,6 @@ import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
 
-import org.sonatype.goodies.common.ComponentSupport;
 import org.sonatype.goodies.lifecycle.Lifecycle;
 import org.sonatype.nexus.common.app.ManagedLifecycle;
 import org.sonatype.nexus.common.app.ManagedLifecycle.Phase;
@@ -32,9 +31,13 @@ import com.google.inject.Key;
 import org.eclipse.sisu.BeanEntry;
 import org.eclipse.sisu.Mediator;
 import org.eclipse.sisu.inject.BeanLocator;
+import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.collect.Lists.reverse;
+import static java.lang.Math.max;
+import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.KERNEL;
 import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.OFF;
 import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.TASKS;
 
@@ -47,10 +50,13 @@ import static org.sonatype.nexus.common.app.ManagedLifecycle.Phase.TASKS;
  */
 @Singleton
 public class NexusLifecycleManager
-    extends ComponentSupport
-    implements ManagedLifecycleManager
+    extends ManagedLifecycleManager
 {
   private static final Phase[] PHASES = Phase.values();
+
+  private final BeanLocator locator;
+
+  private final Bundle systemBundle;
 
   private final Iterable<? extends BeanEntry<Named, Lifecycle>> lifecycles;
 
@@ -61,7 +67,9 @@ public class NexusLifecycleManager
   private volatile Phase currentPhase = OFF;
 
   @Inject
-  public NexusLifecycleManager(BeanLocator locator) {
+  public NexusLifecycleManager(final BeanLocator locator, @Named("system") final Bundle systemBundle) {
+    this.locator = checkNotNull(locator);
+    this.systemBundle = checkNotNull(systemBundle);
     this.lifecycles = locator.locate(Key.get(Lifecycle.class, Named.class));
 
     locator.watch(Key.get(BundleContext.class), new BundleContextMediator(), this);
@@ -73,54 +81,88 @@ public class NexusLifecycleManager
   }
 
   @Override
-  public synchronized void to(Phase targetPhase) throws Exception {
+  public void to(final Phase targetPhase) throws Exception {
+    if (targetPhase == OFF) {
+      declareShutdown();
+    }
+    else if (isShuttingDown()) {
+      return; // cannot go back once shutdown has begun
+    }
 
-    final int target = targetPhase.ordinal();
-    int current = currentPhase.ordinal();
+    synchronized (locator) {
 
-    // refresh index and start/stop components which appeared/disappeared since last index
-    if (current < target) {
-      reindex(targetPhase);
+      final int target = targetPhase.ordinal();
+      int current = currentPhase.ordinal();
+
+      // refresh index and start/stop components which appeared/disappeared since last index
+      if (current < target) {
+        reindex(targetPhase);
+      }
+      else {
+        reindex(currentPhase);
+      }
+
+      // moving forwards to later phase, start components in priority order
+      while (current < target) {
+        Phase nextPhase = PHASES[++current];
+        log.info("Start {}", nextPhase);
+        boolean propagateNonTaskErrors = !TASKS.equals(nextPhase);
+        for (BeanEntry<Named, Lifecycle> entry : cachedIndex.get(nextPhase)) {
+          startComponent(nextPhase, entry.getValue(), propagateNonTaskErrors);
+        }
+        currentPhase = nextPhase;
+      }
+
+      // rolling back to earlier phase, stop components in reverse priority order
+      while (current > target) {
+        Phase prevPhase = PHASES[--current];
+        log.info("Stop {}", currentPhase);
+        for (BeanEntry<Named, Lifecycle> entry : reverse(cachedIndex.get(currentPhase))) {
+          stopComponent(currentPhase, entry.getValue(), false);
+        }
+        currentPhase = prevPhase;
+      }
+    }
+
+    if (currentPhase == OFF) {
+      systemBundle.stop();
+    }
+  }
+
+  @Override
+  public void bounce(final Phase bouncePhase) throws Exception {
+    Phase targetPhase = currentPhase;
+    // re-run the given phase by moving to just before it before moving back
+    if (bouncePhase.ordinal() <= targetPhase.ordinal()) {
+      if (bouncePhase == KERNEL) {
+        System.setProperty("karaf.restart", "true");
+      }
+      to(Phase.values()[max(0, bouncePhase.ordinal() - 1)]);
     }
     else {
-      reindex(currentPhase);
+      targetPhase = bouncePhase; // bounce phase is later, just move to it
     }
-
-    // moving forwards to later phase, start components in priority order
-    while (current < target) {
-      Phase nextPhase = PHASES[++current];
-      log.info("Start {}", nextPhase);
-      boolean propagateNonTaskErrors = !TASKS.equals(nextPhase);
-      for (BeanEntry<Named, Lifecycle> entry : cachedIndex.get(nextPhase)) {
-        startComponent(nextPhase, entry.getValue(), propagateNonTaskErrors);
-      }
-      currentPhase = nextPhase;
-    }
-
-    // rolling back to earlier phase, stop components in reverse priority order
-    while (current > target) {
-      Phase prevPhase = PHASES[--current];
-      log.info("Stop {}", currentPhase);
-      for (BeanEntry<Named, Lifecycle> entry : reverse(cachedIndex.get(currentPhase))) {
-        stopComponent(currentPhase, entry.getValue(), false);
-      }
-      currentPhase = prevPhase;
-    }
+    to(targetPhase);
   }
 
   /**
    * Starts/stops components that have appeared/disappeared since the last change.
    */
-  public synchronized void sync() throws Exception {
-    reindex(currentPhase);
+  public void sync() throws Exception {
+    synchronized (locator) {
+      reindex(currentPhase);
+    }
   }
 
   /**
    * Refreshes the lifecycle index, starting/stopping any components belonging
    * to the current or earlier phases as they appear/disappear from the index.
    */
-  private void reindex(Phase targetPhase) throws Exception {
+  private void reindex(final Phase targetPhase) throws Exception {
     ListMultimap<Phase, BeanEntry<Named, Lifecycle>> index = index(targetPhase);
+    if (index.equals(cachedIndex)) {
+      return; // nothing has changed
+    }
 
     // remove entries from current index that also exist in new index, start any new entries
     for (int p = 1; p <= currentPhase.ordinal(); p++) {
@@ -148,7 +190,9 @@ public class NexusLifecycleManager
   /**
    * Starts the given lifecycle component, propagating lifecycle errors only when requested.
    */
-  private void startComponent(Phase phase, Lifecycle lifecycle, boolean propagateErrors) throws Exception {
+  private void startComponent(final Phase phase, final Lifecycle lifecycle, final boolean propagateErrors)
+      throws Exception
+  {
     try {
       if (components.put(phase, lifecycle)) {
         log.debug("Start {}: {}", phase, lifecycle);
@@ -166,7 +210,9 @@ public class NexusLifecycleManager
   /**
    * Stops the given lifecycle component, propagating lifecycle errors only when requested.
    */
-  private void stopComponent(Phase phase, Lifecycle lifecycle, boolean propagateErrors) throws Exception {
+  private void stopComponent(final Phase phase, final Lifecycle lifecycle, final boolean propagateErrors)
+      throws Exception
+  {
     try {
       if (components.remove(phase, lifecycle)) {
         log.debug("Stop {}: {}", phase, lifecycle);
@@ -184,7 +230,7 @@ public class NexusLifecycleManager
   /**
    * Creates a multilevel index containing all managed lifecycles up to and including the target phase.
    */
-  private ListMultimap<Phase, BeanEntry<Named, Lifecycle>> index(Phase targetPhase) {
+  private ListMultimap<Phase, BeanEntry<Named, Lifecycle>> index(final Phase targetPhase) {
     ListMultimap<Phase, BeanEntry<Named, Lifecycle>> index = ArrayListMultimap.create();
 
     final int target = targetPhase.ordinal();
@@ -206,12 +252,16 @@ public class NexusLifecycleManager
       implements Mediator<Annotation, BundleContext, NexusLifecycleManager>
   {
     @Override
-    public void add(BeanEntry<Annotation, BundleContext> entry, NexusLifecycleManager manager) throws Exception {
+    public void add(final BeanEntry<Annotation, BundleContext> entry, final NexusLifecycleManager manager)
+        throws Exception
+    {
       manager.sync();
     }
 
     @Override
-    public void remove(BeanEntry<Annotation, BundleContext> entry, NexusLifecycleManager manager) throws Exception {
+    public void remove(final BeanEntry<Annotation, BundleContext> entry, final NexusLifecycleManager manager)
+        throws Exception
+    {
       manager.sync();
     }
   }

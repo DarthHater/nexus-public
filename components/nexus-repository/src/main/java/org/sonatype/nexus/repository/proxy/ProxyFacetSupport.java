@@ -24,6 +24,8 @@ import javax.inject.Named;
 import javax.validation.constraints.NotNull;
 
 import org.sonatype.goodies.common.Time;
+import org.sonatype.nexus.common.io.Cooperation;
+import org.sonatype.nexus.common.io.CooperationFactory;
 import org.sonatype.nexus.repository.BadRequestException;
 import org.sonatype.nexus.repository.FacetSupport;
 import org.sonatype.nexus.repository.InvalidContentException;
@@ -34,6 +36,7 @@ import org.sonatype.nexus.repository.cache.NegativeCacheFacet;
 import org.sonatype.nexus.repository.config.Configuration;
 import org.sonatype.nexus.repository.config.ConfigurationFacet;
 import org.sonatype.nexus.repository.httpclient.HttpClientFacet;
+import org.sonatype.nexus.repository.httpclient.RemoteBlockedIOException;
 import org.sonatype.nexus.repository.storage.MissingBlobException;
 import org.sonatype.nexus.repository.storage.RetryDeniedException;
 import org.sonatype.nexus.repository.view.Content;
@@ -59,6 +62,7 @@ import org.joda.time.DateTime;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.lang.Boolean.TRUE;
 
 /**
  * A support class which implements basic payload logic; subclasses provide format-specific operations.
@@ -100,6 +104,8 @@ public abstract class ProxyFacetSupport
     }
   }
 
+  private static final ThreadLocal<Boolean> downloading = new ThreadLocal<>();
+
   private Config config;
 
   private HttpClientFacet httpClient;
@@ -108,28 +114,49 @@ public abstract class ProxyFacetSupport
 
   protected CacheControllerHolder cacheControllerHolder;
 
-  private Cooperation<Content> contentCooperation;
+  @Nullable
+  private CooperationFactory.Builder cooperationBuilder;
+
+  @Nullable
+  private Cooperation proxyCooperation;
 
   /**
    * Configures content {@link Cooperation} for this proxy; a timeout of 0 means wait indefinitely.
    *
    * @param enabled should threads attempt to cooperate when downloading resources
-   * @param passiveTimeout used when passively cooperating on an initial download
-   * @param activeTimeout used when actively cooperating on a download dependency
-   * @param threadsPerKey maximum threads that can cooperate on the same download
+   * @param majorTimeout when waiting for the main I/O request
+   * @param minorTimeout when waiting for any I/O dependencies
+   * @param threadsPerKey limits the threads waiting under each key
    *
    * @since 3.4
    */
   @Inject
   protected void configureCooperation(
+      final CooperationFactory cooperationFactory,
       @Named("${nexus.proxy.cooperation.enabled:-true}") final boolean cooperationEnabled,
-      @Named("${nexus.proxy.cooperation.passiveTimeout:-0s}") final Time passiveTimeout,
-      @Named("${nexus.proxy.cooperation.activeTimeout:-30s}") final Time activeTimeout,
+      @Named("${nexus.proxy.cooperation.majorTimeout:-0s}") final Time majorTimeout,
+      @Named("${nexus.proxy.cooperation.minorTimeout:-30s}") final Time minorTimeout,
       @Named("${nexus.proxy.cooperation.threadsPerKey:-100}") final int threadsPerKey)
   {
     if (cooperationEnabled) {
-      this.contentCooperation = new Cooperation<>(passiveTimeout, activeTimeout, threadsPerKey);
+      this.cooperationBuilder = cooperationFactory.configure()
+          .majorTimeout(majorTimeout)
+          .minorTimeout(minorTimeout)
+          .threadsPerKey(threadsPerKey);
     }
+  }
+
+  @VisibleForTesting
+  void buildCooperation() {
+    if (cooperationBuilder != null) {
+      this.proxyCooperation = cooperationBuilder.build(getRepository().getName() + ":proxy");
+    }
+  }
+
+  @Override
+  protected void doInit(final Configuration configuration) throws Exception {
+    super.doInit(configuration);
+    buildCooperation();
   }
 
   @Override
@@ -195,13 +222,14 @@ public abstract class ProxyFacetSupport
     if (!isStale(context, content)) {
       return content;
     }
-    if (contentCooperation == null) {
+    if (proxyCooperation == null) {
       return doGet(context, content);
     }
-    return contentCooperation.cooperate(getRequestKey(context), (checkCache) -> {
+    return proxyCooperation.cooperate(getRequestKey(context), failover -> {
       Content latestContent = content;
-      if (checkCache) {
-        latestContent = maybeGetCachedContent(context);
+      if (failover) {
+        // re-check cache when failing over to new thread
+        latestContent = proxyCooperation.join(() -> maybeGetCachedContent(context));
         if (!isStale(context, latestContent)) {
           return latestContent;
         }
@@ -211,16 +239,29 @@ public abstract class ProxyFacetSupport
   }
 
   /**
+   * Is the current thread actively downloading (ie. fetch + store) from the upstream proxy?
+   *
+   * @since 3.16
+   */
+  public static boolean isDownloading() {
+    return TRUE.equals(downloading.get());
+  }
+
+  /**
    * @since 3.4
    */
   protected Content doGet(final Context context, @Nullable final Content staleContent) throws IOException {
     Content remote = null, content = staleContent;
 
+    boolean nested = isDownloading();
     try {
+      if (!nested) {
+        downloading.set(TRUE);
+      }
       remote = fetch(context, content);
       if (remote != null) {
         content = store(context, remote);
-        if (contentCooperation != null && remote.equals(content)) {
+        if (proxyCooperation != null && remote.equals(content)) {
           // remote wasn't stored; make reusable copy for cooperation
           content = new TempContent(remote);
         }
@@ -236,6 +277,9 @@ public abstract class ProxyFacetSupport
       logContentOrThrow(content, context, null, e.getCause()); // "special" path (for now) for npm and similar peculiar formats
     }
     finally {
+      if (!nested) {
+        downloading.remove();
+      }
       if (remote != null && !remote.equals(content)) {
         Closeables.close(remote, true);
       }
@@ -269,7 +313,11 @@ public abstract class ProxyFacetSupport
       log.debug(logMessage, exception, repositoryName, contextUrl, statusLine);
     }
     else {
-      if (log.isDebugEnabled()) {
+      if (exception instanceof RemoteBlockedIOException) {
+        // trace because the blocked status of a repo is typically discoverable in the UI and other log messages
+        log.trace(logMessage, exception, repositoryName, contextUrl, statusLine, exception);
+      }
+      else if (log.isDebugEnabled()) {
         log.warn(logMessage, exception, repositoryName, contextUrl, statusLine, exception);
       }
       else {
@@ -515,6 +563,6 @@ public abstract class ProxyFacetSupport
    */
   @VisibleForTesting
   Map<String, Integer> getThreadCooperationPerRequest() {
-    return contentCooperation.getThreadCountPerKey();
+    return proxyCooperation.getThreadCountPerKey();
   }
 }

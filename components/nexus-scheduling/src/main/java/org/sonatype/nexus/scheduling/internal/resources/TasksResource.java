@@ -20,6 +20,7 @@ import javax.inject.Named;
 import javax.inject.Singleton;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
+import javax.ws.rs.NotAllowedException;
 import javax.ws.rs.POST;
 import javax.ws.rs.NotFoundException;
 import javax.ws.rs.Path;
@@ -46,22 +47,21 @@ import static java.util.stream.Collectors.toList;
 import static javax.ws.rs.core.MediaType.APPLICATION_JSON;
 import static javax.ws.rs.core.Response.Status.CONFLICT;
 import static javax.ws.rs.core.Response.Status.INTERNAL_SERVER_ERROR;
-import static org.sonatype.nexus.scheduling.internal.resources.TasksResource.RESOURCE_URI;
-import static org.sonatype.nexus.rest.APIConstants.BETA_API_PREFIX;
+import static org.sonatype.nexus.rest.APIConstants.V1_API_PREFIX;
 
 /**
  * @since 3.6
  */
 @Named
 @Singleton
-@Path(RESOURCE_URI)
+@Path(TasksResource.RESOURCE_URI)
 @Produces(APPLICATION_JSON)
 @Consumes(APPLICATION_JSON)
 public class TasksResource
     extends ComponentSupport
     implements Resource, TasksResourceDoc
 {
-  public static final String RESOURCE_URI = BETA_API_PREFIX + "/tasks";
+  public static final String RESOURCE_URI = V1_API_PREFIX + "/tasks";
 
   private static final String TRIGGER_SOURCE = "REST API";
 
@@ -99,10 +99,16 @@ public class TasksResource
   @RequiresPermissions("nexus:tasks:start")
   public void run(@PathParam("id") final String id) {
     try {
-      getTaskInfo(id).runNow(TRIGGER_SOURCE);
+      TaskInfo taskInfo = getTaskInfo(id);
+
+      if (!taskInfo.getConfiguration().isEnabled()) {
+        throw new NotAllowedException(format("Task %s is disabled", id));
+      }
+
+      taskInfo.runNow(TRIGGER_SOURCE);
     }
-    catch (NotFoundException notFoundException) {
-      throw notFoundException;
+    catch (NotFoundException | NotAllowedException e) {
+      throw e;
     }
     catch (Exception e) {
       log.error("error running task with id {}", id, e);

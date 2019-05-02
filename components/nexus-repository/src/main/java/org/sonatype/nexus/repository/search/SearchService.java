@@ -19,6 +19,7 @@ import javax.annotation.Nullable;
 
 import org.sonatype.nexus.repository.Repository;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.index.query.QueryBuilder;
@@ -112,6 +113,24 @@ public interface SearchService
   SearchResponse search(QueryBuilder query, @Nullable List<SortBuilder> sort, int from, int size);
 
   /**
+   * Search component metadata and browse results with content selectors applied.
+   *
+   * @since 3.14
+   */
+  Iterable<SearchHit> browse(QueryBuilder query);
+
+  /**
+   * Search component metadata and browse results (paged) in selected repositories
+   *
+   * @since 3.14
+   */
+  SearchResponse searchUnrestrictedInRepos(final QueryBuilder query,
+                                           @Nullable final List<SortBuilder> sort,
+                                           final int from,
+                                           final int size,
+                                           Collection<String> repoNames);
+
+  /**
    * Search component metadata and browse results using aggregations with content selectors applied.
    *
    * @since 3.7
@@ -132,6 +151,23 @@ public interface SearchService
    *
    * @since 3.4
    */
-  void flush();
+  void flush(boolean fsync);
 
+  /**
+   * Used by UTs and ITs only to "wait for calm period" when all search indexing is finished.
+   *
+   * @since 3.13
+   */
+  @VisibleForTesting
+  boolean isCalmPeriod();
+
+  void waitForCalm();
+
+  /**
+   * Used by ITs to check the frequency of search updates.
+   *
+   * @since 3.next
+   */
+  @VisibleForTesting
+  long getUpdateCount();
 }

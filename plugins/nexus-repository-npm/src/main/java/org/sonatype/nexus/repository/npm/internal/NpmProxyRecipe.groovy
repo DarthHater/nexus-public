@@ -20,7 +20,6 @@ import javax.inject.Singleton
 
 import org.sonatype.nexus.repository.npm.internal.NpmProxyFacetImpl.ProxyTarget
 import org.sonatype.nexus.repository.npm.internal.search.legacy.NpmSearchIndexFacetProxy
-import org.sonatype.nexus.repository.npm.internal.search.v1.NpmSearchFacet
 
 import org.sonatype.nexus.repository.Format
 import org.sonatype.nexus.repository.Repository
@@ -28,6 +27,7 @@ import org.sonatype.nexus.repository.Type
 import org.sonatype.nexus.repository.cache.NegativeCacheFacet
 import org.sonatype.nexus.repository.http.HttpHandlers
 import org.sonatype.nexus.repository.httpclient.HttpClientFacet
+import org.sonatype.nexus.repository.npm.internal.search.v1.NpmSearchFacetProxy
 import org.sonatype.nexus.repository.purge.PurgeUnusedFacet
 import org.sonatype.nexus.repository.storage.SingleAssetComponentMaintenance
 import org.sonatype.nexus.repository.types.ProxyType
@@ -64,7 +64,7 @@ class NpmProxyRecipe
   Provider<NpmSearchIndexFacetProxy> npmSearchIndexFacet
 
   @Inject
-  Provider<NpmSearchFacet> npmSearchFacet
+  Provider<NpmSearchFacetProxy> npmSearchFacet
 
   @Inject
   Provider<PurgeUnusedFacet> purgeUnusedFacet
@@ -125,6 +125,7 @@ class NpmProxyRecipe
         .handler(contentHeadersHandler)
         .handler(proxyTargetHandler.rcurry(ProxyTarget.SEARCH_INDEX))
         .handler(unitOfWorkHandler)
+        .handler(lastDownloadedHandler)
         .handler(NpmHandlers.searchIndex)
         .create())
 
@@ -146,6 +147,7 @@ class NpmProxyRecipe
     builder.route(packageMatcher(GET)
         .handler(timingHandler)
         .handler(securityHandler)
+        .handler(routingHandler)
         .handler(NpmHandlers.npmErrorHandler)
         .handler(negativeCacheHandler)
         .handler(partialFetchHandler)
@@ -153,6 +155,7 @@ class NpmProxyRecipe
         .handler(contentHeadersHandler)
         .handler(proxyTargetHandler.rcurry(ProxyTarget.PACKAGE))
         .handler(unitOfWorkHandler)
+        .handler(lastDownloadedHandler)
         .handler(proxyHandler)
         .create())
 
@@ -160,6 +163,7 @@ class NpmProxyRecipe
     builder.route(tarballMatcher(GET)
         .handler(timingHandler)
         .handler(securityHandler)
+        .handler(routingHandler)
         .handler(NpmHandlers.npmErrorHandler)
         .handler(handlerContributor)
         .handler(negativeCacheHandler)
@@ -168,10 +172,11 @@ class NpmProxyRecipe
         .handler(contentHeadersHandler)
         .handler(proxyTargetHandler.rcurry(ProxyTarget.TARBALL))
         .handler(unitOfWorkHandler)
+        .handler(lastDownloadedHandler)
         .handler(proxyHandler)
         .create())
 
-    createUserRoutes(builder);
+    createUserRoutes(builder)
 
     builder.defaultHandlers(HttpHandlers.notFound())
 

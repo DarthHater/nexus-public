@@ -53,7 +53,7 @@ class RepositoryComponentTest
 
   @Before
   void setup() {
-    repository = repository();
+    repository = repository()
 
     when(format.getValue()).thenReturn('format')
     when(repositoryManager.browse()).thenReturn([repository])
@@ -66,7 +66,7 @@ class RepositoryComponentTest
   @Test
   void checkUserPermissionsOnFilter() {
     underTest.filter(new StoreLoadParameters(filter: []))
-    verify(repositoryPermissionChecker).userCanBrowseRepository(repository)
+    verify(repositoryPermissionChecker).userCanBrowseRepositories([repository] as List<Repository>)
   }
 
   Repository repository() {

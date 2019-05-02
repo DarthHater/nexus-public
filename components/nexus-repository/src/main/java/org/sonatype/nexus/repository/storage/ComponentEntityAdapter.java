@@ -33,6 +33,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.orientechnologies.orient.core.collate.OCaseInsensitiveCollate;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OClass.INDEX_TYPE;
 import com.orientechnologies.orient.core.metadata.schema.OType;
@@ -106,9 +107,6 @@ public class ComponentEntityAdapter
   private static final String EXISTS_QUERY_STRING =
       format("select from index:%1$s where key = [:%2$s, :%3$s, :%4$s, :%5$s]",
           I_BUCKET_GROUP_NAME_VERSION, P_BUCKET, P_GROUP, P_NAME, P_VERSION);
-
-
-  private static final OSQLSynchQuery<ODocument> EXISTS_QUERY = new OSQLSynchQuery<>(EXISTS_QUERY_STRING, 1);
 
   private final ComponentFactory componentFactory;
 
@@ -197,7 +195,8 @@ public class ComponentEntityAdapter
     params.put(P_NAME, checkNotNull(name));
     params.put(P_VERSION, version);
     params.put(P_BUCKET, recordIdentity(id(checkNotNull(bucket))));
-    return !Iterables.isEmpty(db.command(EXISTS_QUERY).<Iterable<ODocument>>execute(params));
+    OSQLSynchQuery<ODocument> query = new OSQLSynchQuery<>(EXISTS_QUERY_STRING, 1);
+    return !Iterables.isEmpty(db.command(query).<Iterable<ODocument>>execute(params));
   }
 
   @Override
@@ -260,5 +259,22 @@ public class ComponentEntityAdapter
       default:
         return null;
     }
+  }
+
+  /**
+   * Custom affinity based on name, so recreated components will have the same affinity.
+   */
+  @Override
+  public String eventAffinity(final ODocument document) {
+    ORID bucketId = document.field(P_BUCKET, ORID.class);
+    return bucketId + "@" + document.field(P_NAME, OType.STRING);
+  }
+
+  /**
+   * Enables deconfliction of component metadata.
+   */
+  @Override
+  public boolean resolveConflicts() {
+    return true;
   }
 }

@@ -44,6 +44,10 @@ Ext.define('NX.coreui.controller.HealthCheckRepositoryColumn', {
     { ref: 'list', selector: 'nx-coreui-repository-list-template' },
     { ref: 'summary', selector: 'nx-coreui-healthcheck-summary' }
   ],
+  analyzeButtonTemplate: new Ext.Template('<a class="x-btn x-unselectable x-btn-nx-primary-small" ' +
+      'hidefocus="on" unselectable="on" role="button" aria-hidden="false" aria-disabled="false">' +
+      '<span data-ref="btnInnerEl" unselectable="on" class="x-btn-inner x-btn-inner-nx-primary-small">' +
+      '{0}</span></a>').compile(),
 
   /**
    * @override
@@ -78,7 +82,8 @@ Ext.define('NX.coreui.controller.HealthCheckRepositoryColumn', {
       },
       component: {
         'nx-coreui-repository-list-template': {
-          afterrender: me.bindHealthCheckColumn
+          afterrender: me.bindHealthCheckColumn,
+          destroy: me.destroyToolTip
         }
       }
     });
@@ -107,7 +112,10 @@ Ext.define('NX.coreui.controller.HealthCheckRepositoryColumn', {
   bindHealthCheckColumn: function(grid) {
     var me = this;
     grid.mon(
-        NX.Conditions.isPermitted("nexus:healthcheck:read"),
+        NX.Conditions.and(
+            NX.Conditions.watchState('user'),
+            NX.Conditions.isPermitted("nexus:healthcheck:read")
+        ),
         {
           satisfied: Ext.pass(me.addHealthCheckColumn, grid),
           unsatisfied: Ext.pass(me.removeHealthCheckColumn, grid),
@@ -124,11 +132,10 @@ Ext.define('NX.coreui.controller.HealthCheckRepositoryColumn', {
    */
   addHealthCheckColumn: function(grid) {
     var me = this,
-        view = grid.getView(),
-        column = grid.healthCheckColumn;
+        view = grid.getView();
 
-    if (!column) {
-      column = grid.healthCheckColumn = Ext.create('Ext.grid.column.Column', {
+    if (!grid.healthCheckColumn) {
+      grid.healthCheckColumn = grid.pushColumn({
         id: 'healthCheckColumn',
         header: NX.I18n.get('HealthCheckRepositoryColumn_Header'),
         hideable: false,
@@ -142,23 +149,36 @@ Ext.define('NX.coreui.controller.HealthCheckRepositoryColumn', {
           click: Ext.bind(me.maybeAskToEnable, me)
         }
       });
-      grid.headerCt.add(column);
+
       view.refresh();
+
       grid.healthCheckTooltip = Ext.create('Ext.ToolTip', {
         target: view.getEl(),
-        delegate: view.getCellSelector(column),
+        delegate: view.getCellSelector(grid.healthCheckColumn),
         renderTo: NX.global.document.body,
         maxWidth: 550,
-        // mouseOffset origin is [15, 18]. The following offset moves the tooltip to the left of the mouse
-        //  while correcting for the [15, 18] origin
-        mouseOffset: [-585, -18],
+        // The following offset moves the tooltip to the left of the mouse
+        mouseOffset: [-15, 1],
         showDelay: 400,
-        hideDelay: 20000,
+        hideDelay: 2000,
         dismissDelay: 20000,
         listeners: {
           beforeshow: Ext.bind(me.updateHealthCheckColumnTooltip, me)
         }
       });
+    }
+  },
+
+  /**
+   * Remove ToolTip associated with the Health Check column of the grid to prevent memory leak
+   *
+   * @private
+   * @param {NX.coreui.view.repository.RepositoryList} grid repository grid
+   */
+  destroyToolTip: function(grid) {
+    var tip = grid.healthCheckTooltip;
+    if (tip) {
+      tip.destroy();
     }
   },
 
@@ -189,8 +209,7 @@ Ext.define('NX.coreui.controller.HealthCheckRepositoryColumn', {
    */
   renderHealthCheckColumn: function(value, metadata, repositoryModel) {
     var me = this,
-        statusModel = me.getHealthCheckRepositoryStatusStore().getById(repositoryModel.getId()),
-        classes, text, button;
+        statusModel = me.getHealthCheckRepositoryStatusStore().getById(repositoryModel.getId());
 
     if (!statusModel) {
       if (!me.getHealthCheckRepositoryStatusStore().loaded && NX.Permissions.check('nexus:healthcheck:read')) {
@@ -205,91 +224,17 @@ Ext.define('NX.coreui.controller.HealthCheckRepositoryColumn', {
       if (statusModel.get('analyzing')) {
         return NX.I18n.get('HealthCheckRepositoryColumn_Analyzing');
       }
-      else if (statusModel.get('totalCounts')) {
-        var id = Ext.id(),
-          totalCounts = statusModel.get('totalCounts'),
-          noTrendData = Ext.Array.every(totalCounts, function(e) { return e === 0; }, this),
-          vulnerableCounts = statusModel.get('vulnerableCounts'),
-          totalDisplay = totalCounts[0],
-          vulnerableDisplay = vulnerableCounts[0],
-          util = NX.coreui.util.HealthCheckUtil;
-
-        if (noTrendData) {
-          return NX.I18n.get('HealthCheckRepositoryColumn_CollectingTrendData');
-        }
-        else {
-          Ext.defer(function () {
-            me.setupDownloadChart(id, totalCounts, vulnerableCounts);
-          }, 100, me);
-
-          return Ext.String.format(
-            '<div>' +
-            '  <div id="{0}" class="healthcheck-downloads"></div>' +
-            '  <div class="healthcheck-downloads">' +
-            '    <div class="healthcheck-total-downloads">{1}</div>' +
-            '    <div class="healthcheck-bad-downloads">{2}</div>' +
-            '  </div>' +
-            '</div>', id, util.simplifyNumber(totalDisplay), util.simplifyNumber(vulnerableDisplay));
-        }
-      }
-      else {
-        return NX.I18n.get('HealthCheckRepositoryColumn_DownloadsDisabled');
-      }
+      return '<div class="repository-health-check"><img src="' + NX.Icons.url('security-alert', 'x16') +
+          '">&nbsp;<span class="security-alert">' + statusModel.get('securityIssueCount') + '</span>&nbsp;&nbsp;' +
+          '<img src="' + NX.Icons.url('license-alert', 'x16') + '" style="margin-left:10px">&nbsp;' +
+          '<span class="license-alert">' + statusModel.get('licenseIssueCount') + '</span></div>';
     }
     else if (NX.Permissions.check('nexus:healthcheck:update')) {
-      classes = "x-btn x-unselectable x-btn-nx-primary-small x-btn-nx-primary-toolbar-small-disabled";
-      text = '<span class="x-btn-inner x-btn-inner-center" unselectable="on">' + NX.I18n.get('HealthCheckRepositoryColumn_Analyze') + '</span>';
-      button = '<a class="' + classes + '" hidefocus="on" unselectable="on">' + text + '</a>';
-      return button;
+      return me.analyzeButtonTemplate.apply([NX.I18n.get('HealthCheckRepositoryColumn_Analyze')]);
     }
     else {
       // User doesn’t have the permissions to enable RHC
       return NX.ext.grid.column.Renderers.optionalData(null);
-    }
-  },
-
-  setupDownloadChart: function(id, totalDownloadCounts, vulnerableDownloadCounts) {
-    var me = this, chartData = [], el = Ext.getElementById(id);
-
-    if (el != null) {
-      vulnerableDownloadCounts.forEach(function (d, index) {
-        chartData.push({
-          notVulnerable: totalDownloadCounts[index] - vulnerableDownloadCounts[index],
-          vulnerable: vulnerableDownloadCounts[index]
-        });
-      });
-
-      //the items are sorted with most recent at index 0, so reverse it here the way d3 will need the data
-      chartData.reverse();
-
-      var keys = ['vulnerable', 'notVulnerable'],
-      // The x & y axises are used to map some value onto the graph
-      // X-axis is the months we're showing, 0 -> 14 (13 full months & current)
-          x = d3.scaleBand().rangeRound([0, 70]).paddingInner(0.5).align(0.5).domain(d3.keys(totalDownloadCounts)),
-      // Y axis runs from 0 to the highest download count
-          y = d3.scaleLinear().range([20, 0]).domain([0, Math.max.apply(Math, totalDownloadCounts)]),
-      // Z-axis represents stacked bars
-          z = d3.scaleOrdinal().range(['#DB2852', '#2476c3']).domain(keys);
-
-      d3.select(el)
-          .append('svg').attr('width', '70px').attr('height', '20px')
-          .append("g").selectAll("g").data(d3.stack().keys(keys)(chartData)).enter()
-          .append("g").attr("fill", function (d) {
-            // map fill color of the bar
-            return z(d.key);
-          }).selectAll("rect").data(function (d) {
-            return d;
-          }).enter().append("rect").attr("x", function (d, index) {
-            // horizontal bar position
-            return x(index);
-          }).attr("y", function (d) {
-            // vertical bar position
-            return y(d[1]);
-          }).attr("height", function (d) {
-            // for vulnerability bars this is baseline (0) to vuln count (mapped onto y-axis)
-            // for total bars this is from vuln count to total (mapped onto y-axis)
-            return y(d[0]) - y(d[1]);
-          }).attr("width", x.bandwidth());
     }
   },
 
@@ -316,7 +261,7 @@ Ext.define('NX.coreui.controller.HealthCheckRepositoryColumn', {
             }
             else {
               if (NX.Permissions.check('nexus:healthchecksummary:read')) {
-                cell = view.getCell(repository, me.getList().healthCheckColumn);
+                cell = view.getCell(repository, me.getList().healthCheckColumn, true);
                 Ext.defer(me.showSummary, 0, me, [status, cell.getX(), cell.getY()]);
                 return false;
               }

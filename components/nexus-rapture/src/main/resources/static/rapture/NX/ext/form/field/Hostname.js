@@ -19,6 +19,9 @@
  */
 Ext.define('NX.ext.form.field.Hostname', {
   extend: 'Ext.form.field.Text',
+  requires: [
+    'NX.util.Validator'
+  ],
   alias: 'widget.nx-hostname',
 
   vtype: 'nx-hostname',

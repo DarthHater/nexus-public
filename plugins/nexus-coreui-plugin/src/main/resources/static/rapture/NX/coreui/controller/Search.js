@@ -26,6 +26,7 @@ Ext.define('NX.coreui.controller.Search', {
     'NX.Conditions',
     'NX.Permissions',
     'NX.I18n',
+    'NX.State',
     'NX.coreui.util.BrowseableFormats'
   ],
   masters: [
@@ -89,17 +90,6 @@ Ext.define('NX.coreui.controller.Search', {
         variants: ['x16', 'x32']
       }
     });
-
-    me.getApplication().getFeaturesController().registerFeature({
-      path: '/Search/Saved',
-      mode: 'browse',
-      group: true,
-      iconName: 'search-folder',
-      weight: 500,
-      visible: function() {
-        return NX.Permissions.check('nexus:search:read');
-      }
-    }, me);
 
     me.registerFilter([
       {
@@ -227,7 +217,7 @@ Ext.define('NX.coreui.controller.Search', {
         description: NX.I18n.get('Search_Description'),
         group: true,
         view: { xtype: 'nx-coreui-searchfeature', searchFilter: model, bookmarkEnding: '' },
-        iconName: 'search-default',
+        iconCls: 'x-fa fa-search',
         weight: 20,
         expanded: false,
         visible: function() {
@@ -240,7 +230,7 @@ Ext.define('NX.coreui.controller.Search', {
         mode: 'browse',
         path: '/Search/' + (model.get('readOnly') ? '' : 'Saved/') + model.get('name'),
         view: { xtype: 'nx-coreui-searchfeature', searchFilter: model, bookmarkEnding: '/' + model.getId() },
-        iconName: 'search-default',
+        iconCls: 'x-fa fa-search',
         text: model.get('text'),
         description: model.get('description'),
         authenticationRequired: false,
@@ -276,7 +266,7 @@ Ext.define('NX.coreui.controller.Search', {
         info = me.getFeature() ? me.getFeature().down('#info') : null,
         format = Ext.util.Format.numberRenderer('0,000');
     if (info) {
-      if (rawData.limited) {
+      if (rawData && rawData.limited) {
         info.setTitle(NX.I18n.format('Search_Results_Limit_Message',
             format(rawData.total), format(rawData.unlimitedTotal)));
         info.show();
@@ -299,40 +289,22 @@ Ext.define('NX.coreui.controller.Search', {
         searchResultStore = me.getSearchResultStore(),
         searchCriteriaStore = me.getSearchCriteriaStore(),
         addCriteriaMenu = [],
-        bookmarkSegments = NX.Bookmarks.getBookmark().getSegments(),
-        bookmarkValues = {},
-        filterSegments,
-        criterias = {}, criteriasPerGroup = {},
-        searchCriteria, queryIndex, pair;
-
-    // Extract the filter object from the URI
-    if (bookmarkSegments && bookmarkSegments.length) {
-      queryIndex = bookmarkSegments[0].indexOf('=');
-      if (queryIndex !== -1) {
-        filterSegments = decodeURIComponent(bookmarkSegments[0].slice(queryIndex + 1)).split(' AND ');
-        for (var i = 0; i < filterSegments.length; ++i) {
-          pair = filterSegments[i].split('=');
-          bookmarkValues[pair[0]] = pair[1];
-        }
-      }
-    }
+        criterias = {}, criteriasPerGroup = {};
 
     searchCriteriaPanel.removeAll();
-    searchResultStore.removeAll();
-    searchResultStore.clearFilter(true);
 
     if (searchFilter && searchFilter.get('criterias')) {
       Ext.Array.each(Ext.Array.from(searchFilter.get('criterias')), function(criteria) {
         criterias[criteria['id']] = { value: criteria['value'], hidden: criteria['hidden'] };
       });
     }
-    Ext.Object.each(bookmarkValues, function(key, value) {
-      var existingCriteria = criterias[key];
+    searchResultStore.getFilters().items.forEach(function(filter) {
+      var existingCriteria = criterias[filter.config.id];
       if (existingCriteria) {
-        existingCriteria['value'] = value;
+        existingCriteria['value'] = filter.config.value;
       }
       else {
-        criterias[key] = { value: value, removable: true };
+        criterias[filter.config.id] = { value: filter.config.value, removable: true };
       }
     });
 
@@ -344,19 +316,21 @@ Ext.define('NX.coreui.controller.Search', {
         if (!cmpClass) {
           cmpClass = Ext.ClassManager.getByAlias('widget.nx-coreui-searchcriteria-text');
         }
-        searchCriteria = searchCriteriaPanel.add(cmpClass.create(Ext.apply(Ext.clone(criteriaModel.get('config')), {
+        searchCriteriaPanel.add(cmpClass.create(Ext.apply(Ext.clone(criteriaModel.get('config')), {
           criteriaId: criteriaModel.getId(),
           value: criteria['value'],
           hidden: criteria['hidden'],
           removable: criteria['removable']
         })));
-        if (searchCriteria.value) {
-          me.applyFilter(searchCriteria, false);
-        }
       }
     });
 
     searchCriteriaStore.each(function(criteria) {
+      // skip tags entry if not running PRO
+      if (criteria.getId() === 'tags' && !me.isTaggingEnabled()) {
+        return;
+      }
+
       var addTo = addCriteriaMenu,
           group = criteria.get('group'),
           format = criteria.get('config').format;
@@ -392,8 +366,72 @@ Ext.define('NX.coreui.controller.Search', {
       glyph: 'xf055@FontAwesome' /* fa-plus-circle */,
       menu: addCriteriaMenu
     });
+  },
 
-    searchResultStore.load();
+  /**
+   * @private
+   * Sets the store filters based on the Bookmark
+   */
+  loadBookmark: function() {
+    var me = this,
+        searchFilter = me.getFeature().searchFilter,
+        bookmarkSegments = NX.Bookmarks.getBookmark().getSegments(),
+        bookmarkValues = {},
+        criterias = {},
+        filterSegments,
+        queryIndex,
+        pair;
+
+    // Extract the filter object from the URI
+    if (bookmarkSegments && bookmarkSegments.length) {
+      queryIndex = bookmarkSegments[0].indexOf('=');
+      if (queryIndex !== -1) {
+        filterSegments = decodeURIComponent(bookmarkSegments[0].slice(queryIndex + 1)).split(' AND ');
+        for (var i = 0; i < filterSegments.length; ++i) {
+          pair = filterSegments[i].split('=');
+          bookmarkValues[pair[0]] = pair[1];
+        }
+      }
+    }
+
+    // From the search type (e.g. maven, nuget, custom)
+    if (searchFilter && searchFilter.get('criterias')) {
+      searchFilter.get('criterias').forEach(function(criteria) {
+        if (criteria.value) {
+          criterias[criteria.id] = { value: criteria.value, hidden: criteria.hidden };
+        }
+      });
+    }
+
+    Ext.Object.each(bookmarkValues, function(key, value) {
+      var existingCriteria = criterias[key];
+      if (existingCriteria) {
+        existingCriteria['value'] = value;
+      }
+      else {
+        criterias[key] = { value: value, removable: true };
+      }
+    });
+
+    Ext.Object.each(criterias, function(id, criteria) {
+      if (criteria.value) {
+        me.applyFilter({
+          criteriaId: id,
+          filter: {
+            property: id,
+            value: criteria.value
+          }
+        }, false);
+      }
+    });
+  },
+
+  /**
+   * @private
+   * @returns {boolean} whether tagging feature is available
+   */
+  isTaggingEnabled: function() {
+    return NX.State.getUser() && NX.Permissions.check('nexus:tags:read') && ('PRO' === NX.State.getEdition());
   },
 
   /**
@@ -480,8 +518,11 @@ Ext.define('NX.coreui.controller.Search', {
         searchResultStore = me.getSearchResult().getStore(),
         componentModel;
 
+    searchResultStore.clearFilter(true);
+    me.loadBookmark();
+
     // If no search filter has been specified, don't load any stores
-    if (!me.getStore('SearchResult').filters.length) {
+    if (!searchResultStore.getFilters().length) {
       return;
     }
 
@@ -520,23 +561,24 @@ Ext.define('NX.coreui.controller.Search', {
     }
 
     if (filter) {
-      store.addFilter(Ext.apply(filter, { id: searchCriteria.criteriaId }), apply);
+      store.addFilter([Ext.apply(filter, { id: searchCriteria.criteriaId })], apply);
     }
     else {
-      // TODO code bellow is a workaround stores not removing filters when remoteFilter = true
+      // TODO code below is a workaround stores not removing filters when remoteFilter = true
       store.removeFilter(searchCriteria.criteriaId);
-      if (store.filters.removeAtKey(searchCriteria.criteriaId) && apply) {
-        if (store.filters.length) {
+      if (store.getFilters().removeAtKey(searchCriteria.criteriaId) && apply) {
+        if (store.getFilters().length) {
           store.filter();
         }
         else {
           store.clearFilter();
         }
-        store.fireEvent('filterchange', store, store.filters.items);
+        store.fireEvent('filterchange', store, store.getFilters().items);
       }
     }
 
     if (apply) {
+      store.load();
       me.onSearchResultSelection(null);
       me.bookmarkFilters();
     }

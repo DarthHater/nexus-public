@@ -13,6 +13,8 @@
 package org.sonatype.nexus.repository.httpclient.internal;
 
 import java.io.IOException;
+import java.util.Base64;
+import java.util.Map;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
@@ -30,6 +32,7 @@ import org.sonatype.nexus.httpclient.config.UsernameAuthenticationConfiguration;
 import org.sonatype.nexus.repository.FacetSupport;
 import org.sonatype.nexus.repository.config.Configuration;
 import org.sonatype.nexus.repository.config.ConfigurationFacet;
+import org.sonatype.nexus.repository.httpclient.AutoBlockConfiguration;
 import org.sonatype.nexus.repository.httpclient.HttpClientFacet;
 import org.sonatype.nexus.repository.httpclient.RemoteConnectionStatus;
 import org.sonatype.nexus.repository.httpclient.RemoteConnectionStatusEvent;
@@ -39,13 +42,13 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.eventbus.Subscribe;
 import org.apache.http.Header;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.RedirectStrategy;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.message.BasicHeader;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
-import static org.apache.commons.codec.binary.Base64.*;
 import static org.apache.http.HttpHeaders.AUTHORIZATION;
 import static org.sonatype.nexus.repository.FacetSupport.State.STARTED;
 import static org.sonatype.nexus.repository.httpclient.RemoteConnectionStatusType.AUTO_BLOCKED_UNAVAILABLE;
@@ -61,10 +64,16 @@ public class HttpClientFacetImpl
     extends FacetSupport
     implements HttpClientFacet, RemoteConnectionStatusObserver
 {
+  private static final String DEFAULT = "default";
+
   private final HttpClientManager httpClientManager;
 
   @VisibleForTesting
   static final String CONFIG_KEY = "httpclient";
+
+  private final Map<String, AutoBlockConfiguration> autoBlockConfiguration;
+
+  private final Map<String, RedirectStrategy> redirectStrategy;
 
   @VisibleForTesting
   static class Config
@@ -86,17 +95,27 @@ public class HttpClientFacetImpl
 
   private Config config;
 
-  private BlockingHttpClient httpClient;
+  @VisibleForTesting
+  BlockingHttpClient httpClient;
 
   @Inject
-  public HttpClientFacetImpl(final HttpClientManager httpClientManager) {
+  public HttpClientFacetImpl(final HttpClientManager httpClientManager,
+                             final Map<String, AutoBlockConfiguration> autoBlockConfiguration,
+                             final Map<String, RedirectStrategy> redirectStrategy)
+  {
     this.httpClientManager = checkNotNull(httpClientManager);
+    this.autoBlockConfiguration = checkNotNull(autoBlockConfiguration);
+    this.redirectStrategy = checkNotNull(redirectStrategy);
   }
 
   @VisibleForTesting
-  HttpClientFacetImpl(final HttpClientManager httpClientManager, final Config config) {
-    this(httpClientManager);
+  HttpClientFacetImpl(final HttpClientManager httpClientManager,
+                      final Map<String, AutoBlockConfiguration> autoBlockConfiguration,
+                      final Map<String, RedirectStrategy> redirectStrategy,
+                      final Config config) {
+    this(httpClientManager, autoBlockConfiguration, redirectStrategy);
     this.config = checkNotNull(config);
+    checkNotNull(autoBlockConfiguration.get(DEFAULT));
   }
 
   @Override
@@ -137,7 +156,7 @@ public class HttpClientFacetImpl
 
       String auth = format("%1$s:%2$s", userAuth.getUsername(), userAuth.getPassword());
 
-      byte[] encodedAuth = encodeBase64(auth.getBytes(ISO_8859_1));
+      byte[] encodedAuth = Base64.getEncoder().encode(auth.getBytes(ISO_8859_1));
 
       String authHeader = "Basic " + new String(encodedAuth, ISO_8859_1);
 
@@ -224,12 +243,27 @@ public class HttpClientFacetImpl
     HttpClientConfiguration delegateConfig = new HttpClientConfiguration();
     delegateConfig.setConnection(config.connection);
     delegateConfig.setAuthentication(config.authentication);
+    delegateConfig.setRedirectStrategy(getRedirectStrategy());
     CloseableHttpClient delegate = httpClientManager.create(new ConfigurationCustomizer(delegateConfig));
 
     boolean online = getRepository().getConfiguration().isOnline();
     // wrap delegate with auto-block aware client
-    httpClient = new BlockingHttpClient(delegate, config, this, online);
+    httpClient = new BlockingHttpClient(delegate, config, this, online, getAutoBlockConfiguration());
     log.debug("Created HTTP client: {}", httpClient);
+  }
+
+  private AutoBlockConfiguration getAutoBlockConfiguration() {
+    AutoBlockConfiguration config = this.autoBlockConfiguration.get(getRepository().getFormat().getValue());
+    
+    if (config == null) {
+      config = autoBlockConfiguration.get(DEFAULT);
+    }
+    
+    return config;
+  }
+
+  private RedirectStrategy getRedirectStrategy() {
+    return this.redirectStrategy.get(getRepository().getFormat().getValue());
   }
 
   private void closeHttpClient() throws IOException {

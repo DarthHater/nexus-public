@@ -12,6 +12,7 @@
  */
 package org.sonatype.nexus.repository.storage;
 
+import java.io.Closeable;
 import java.io.InputStream;
 import java.util.Map;
 
@@ -34,7 +35,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
  * @since 3.1
  */
 public class TempBlob
-    implements AutoCloseable, Supplier<InputStream>
+    implements Closeable, Supplier<InputStream>
 {
   private static final Logger log = LoggerFactory.getLogger(TempBlob.class);
 
@@ -45,6 +46,8 @@ public class TempBlob
   private final boolean hashesVerified;
 
   private final BlobStore blobStore;
+
+  private boolean deleted = false;
 
   public TempBlob(final Blob blob,
                   final Map<HashAlgorithm, HashCode> hashes,
@@ -81,8 +84,12 @@ public class TempBlob
 
   @Override
   public void close() {
+    if (deleted) {
+      return;
+    }
     try {
       blobStore.deleteHard(blob.getId());
+      deleted = true;
     }
     catch (BlobStoreException e) {
       log.debug("Unable to delete blob {} in blob store {}", blob.getId(),

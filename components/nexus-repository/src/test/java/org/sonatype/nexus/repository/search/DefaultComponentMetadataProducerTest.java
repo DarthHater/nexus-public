@@ -24,12 +24,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import org.joda.time.DateTime;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
 
 import static com.google.common.collect.Lists.newArrayList;
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.core.IsEqual.equalTo;
+import static org.joda.time.Duration.standardHours;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
@@ -76,6 +82,9 @@ public class DefaultComponentMetadataProducerTest
     assertValue(json, DefaultComponentMetadataProducer.NAME, NAME);
     assertValue(json, DefaultComponentMetadataProducer.GROUP, GROUP);
     assertValue(json, DefaultComponentMetadataProducer.VERSION, VERSION);
+    assertValue(json, DefaultComponentMetadataProducer.IS_PRERELEASE_KEY, "false");
+    assertThat(json.get(DefaultComponentMetadataProducer.LAST_BLOB_UPDATED_KEY), equalTo(null));
+    assertThat(json.get(DefaultComponentMetadataProducer.LAST_DOWNLOADED_KEY), equalTo(null));
     assertValue(json, "foo", "bar");
 
     JsonNode jsonAssets = json.get(DefaultComponentMetadataProducer.ASSETS);
@@ -85,6 +94,133 @@ public class DefaultComponentMetadataProducerTest
     assertValue(jsonAsset, DefaultComponentMetadataProducer.NAME, NAME);
 
     verify(componentMetadataProducerExtension).getComponentMetadata(any(Component.class));
+  }
+
+  @Test
+  public void testMissingVersion() throws IOException {
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, "");
+    Iterable<Asset> assets = newArrayList(createDetachedAsset(bucket, NAME, component));
+
+    String result = underTest.getMetadata(component, assets, emptyMap());
+
+    JsonNode json = mapper.readTree(result);
+
+    assertValue(json, DefaultComponentMetadataProducer.VERSION, "");
+    assertValue(json, DefaultComponentMetadataProducer.NORMALIZED_VERSION, "");
+  }
+
+  @Test
+  public void testNormalizedVersion() throws IOException {
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, "11.11.11-10");
+    Iterable<Asset> assets = newArrayList(createDetachedAsset(bucket, NAME, component));
+
+    String result = underTest.getMetadata(component, assets, emptyMap());
+
+    JsonNode json = mapper.readTree(result);
+
+    assertValue(json, DefaultComponentMetadataProducer.NORMALIZED_VERSION, "000000011.000000011.000000011-000000010");
+  }
+
+  @Test
+  public void testEmptyNormalizedVersion() throws IOException {
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, "");
+    Iterable<Asset> assets = newArrayList(createDetachedAsset(bucket, NAME, component));
+
+    String result = underTest.getMetadata(component, assets, emptyMap());
+
+    JsonNode json = mapper.readTree(result);
+
+    assertValue(json, DefaultComponentMetadataProducer.NORMALIZED_VERSION, "");
+  }
+
+  @Test
+  public void testLongNormalizedVersion() throws IOException {
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, "v1-rev20181217-1.27.0123456789123456789123456789");
+    Iterable<Asset> assets = newArrayList(createDetachedAsset(bucket, NAME, component));
+
+    String result = underTest.getMetadata(component, assets, emptyMap());
+
+    JsonNode json = mapper.readTree(result);
+
+    assertValue(json, DefaultComponentMetadataProducer.NORMALIZED_VERSION, "v000000001-rev020181217-000000001.000000027.0123456789123456789123456789");
+  }
+
+  @Test
+  public void defaultIsPrereleaseWhenUsingRelease() throws Exception {
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, VERSION);
+
+    assertFalse(underTest.isPrerelease(component, emptyList()));
+  }
+
+  @Test
+  public void defaultIsPreReleaseWhenUsingPrerelease() throws Exception {
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, VERSION + "-SNAPSHOT");
+
+    assertFalse(underTest.isPrerelease(component, emptyList()));
+  }
+
+  @Test
+  public void defaultLastBlobUpdatedUsesNewestUpload() throws Exception {
+    DateTime expected = new DateTime();
+
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, VERSION);
+    Iterable<Asset> assets = newArrayList(
+        createDetachedAsset(bucket, "asset1", component).blobUpdated(expected.minusMillis(1)),
+        createDetachedAsset(bucket, NAME, component).blobUpdated(expected),
+        createDetachedAsset(bucket, "asset2", component).blobUpdated(expected.minusMillis(2))
+    );
+
+    DateTime actual = underTest.lastBlobUpdated(assets).get();
+
+    assertThat(actual, is(expected));
+  }
+
+  @Test
+  public void defaultLastBlobUpdatedWithNoAssetsToNoDate() throws Exception {
+    DateTime expected = new DateTime();
+
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, VERSION)
+        .lastUpdated(expected.plusMillis(1));
+
+    assertThat(underTest.lastBlobUpdated(emptyList()).isPresent(), is(false));
+  }
+
+  @Test
+  public void defaultLastDownloadedWhenNoDownloadsUsesNewestDownloadDate() throws Exception {
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, VERSION);
+    Iterable<Asset> assets = newArrayList(
+        createDetachedAsset(bucket, "asset1", component),
+        createDetachedAsset(bucket, NAME, component),
+        createDetachedAsset(bucket, "asset2", component)
+    );
+
+    assertThat(underTest.lastDownloaded(assets).isPresent(), is(false));
+  }
+
+  @Test
+  public void defaultLastDownloadedWhenSingleAssetMarkedAsDownloaded() throws Exception {
+    Bucket bucket = createBucket(REPO_NAME);
+    Component component = createDetachedComponent(bucket, GROUP, NAME, VERSION);
+    Asset expected = createDetachedAsset(bucket, NAME, component);
+    expected.markAsDownloaded(standardHours(12));
+    Iterable<Asset> assets = newArrayList(
+        createDetachedAsset(bucket, "asset1", component),
+        expected,
+        createDetachedAsset(bucket, "asset2", component)
+    );
+
+    DateTime actual = underTest.lastDownloaded(assets).get();
+
+    assertThat(actual, is(expected.lastDownloaded()));
   }
 
   private void assertValue(final JsonNode json, final String jsonAttribute, final String value) {

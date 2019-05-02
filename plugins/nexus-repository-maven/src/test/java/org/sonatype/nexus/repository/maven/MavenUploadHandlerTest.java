@@ -16,10 +16,8 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import org.sonatype.goodies.testsupport.TestSupport;
 import org.sonatype.nexus.common.collect.AttributesMap;
@@ -62,20 +60,19 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 
-import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 import static java.util.Collections.singleton;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -87,7 +84,9 @@ import static org.sonatype.nexus.repository.upload.UploadFieldDefinition.Type.ST
 public class MavenUploadHandlerTest
     extends TestSupport
 {
-  private final String REPO_NAME = "maven-hosted";
+  private static final String GROUP_NAME_COORDINATES = "Component coordinates";
+
+  private static final String REPO_NAME = "maven-hosted";
 
   private MavenUploadHandler underTest;
 
@@ -113,6 +112,9 @@ public class MavenUploadHandlerTest
   TempBlob tempBlob;
 
   @Mock
+  MavenHostedFacet mavenHostedFacet;
+
+  @Mock
   private ContentPermissionChecker contentPermissionChecker;
 
   @Mock
@@ -136,6 +138,7 @@ public class MavenUploadHandlerTest
     when(repository.getName()).thenReturn(REPO_NAME);
     when(repository.getFormat()).thenReturn(new Maven2Format());
     when(repository.facet(MavenFacet.class)).thenReturn(mavenFacet);
+    when(repository.facet(MavenHostedFacet.class)).thenReturn(mavenHostedFacet);
 
     StorageFacet storageFacet = mock(StorageFacet.class);
     when(storageFacet.txSupplier()).thenReturn(() -> storageTx);
@@ -153,7 +156,8 @@ public class MavenUploadHandlerTest
     Map<HashAlgorithm, HashCode> checksums = Collections.singletonMap(
         HashAlgorithm.SHA1,
         HashCode.fromString("da39a3ee5e6b4b0d3255bfef95601890afd80709"));
-    when(attributesMap.require(eq(Content.CONTENT_HASH_CODES_MAP), eq(Content.T_CONTENT_HASH_CODES_MAP))).thenReturn(checksums);
+    when(attributesMap.require(eq(Content.CONTENT_HASH_CODES_MAP), eq(Content.T_CONTENT_HASH_CODES_MAP)))
+        .thenReturn(checksums);
     when(content.getAttributes()).thenReturn(attributesMap);
     when(mavenFacet.put(any(), any())).thenReturn(content);
   }
@@ -164,13 +168,15 @@ public class MavenUploadHandlerTest
 
     assertThat(def.isMultipleUpload(), is(true));
     // Order is important on fields as it affects the UI
-    assertThat(def.getComponentFields(),
-        contains(field("groupId", "Group ID", null, false, STRING), field("artifactId", "Artifact ID", null, false, STRING),
-            field("version", "Version", null, false, STRING),
-            field("generate-pom", "Generate a POM file with these coordinates", null, true, BOOLEAN),
-            field("packaging", "Packaging", null, true, STRING)));
-    assertThat(def.getAssetFields(),
-        contains(field("classifier", "Classifier", null, true, STRING), field("extension", "Extension", null, false, STRING)));
+    assertThat(def.getComponentFields(), contains(
+        field("groupId", "Group ID", null, false, STRING, GROUP_NAME_COORDINATES),
+        field("artifactId", "Artifact ID", null, false, STRING, GROUP_NAME_COORDINATES),
+        field("version", "Version", null, false, STRING, GROUP_NAME_COORDINATES),
+        field("generate-pom", "Generate a POM file with these coordinates", null, true, BOOLEAN, GROUP_NAME_COORDINATES),
+        field("packaging", "Packaging", null, true, STRING, GROUP_NAME_COORDINATES)));
+    assertThat(def.getAssetFields(), contains(
+        field("classifier", "Classifier", null, true, STRING, null),
+        field("extension", "Extension", null, false, STRING, null)));
   }
 
   @Test
@@ -183,15 +189,17 @@ public class MavenUploadHandlerTest
 
     assertThat(def.isMultipleUpload(), is(true));
     // Order is important on fields as it affects the UI
-    assertThat(def.getComponentFields(),
-        contains(field("groupId", "Group ID", null, false, STRING), field("artifactId", "Artifact ID", null, false, STRING),
-            field("version", "Version", null, false, STRING),
-            field("generate-pom", "Generate a POM file with these coordinates", null, true, BOOLEAN),
-            field("packaging", "Packaging", null, true, STRING),
-            field("foo", "Foo", null, true, STRING)));
+    assertThat(def.getComponentFields(), contains(
+        field("groupId", "Group ID", null, false, STRING, GROUP_NAME_COORDINATES),
+        field("artifactId", "Artifact ID", null, false, STRING, GROUP_NAME_COORDINATES),
+        field("version", "Version", null, false, STRING, GROUP_NAME_COORDINATES),
+        field("generate-pom", "Generate a POM file with these coordinates", null, true, BOOLEAN, GROUP_NAME_COORDINATES),
+        field("packaging", "Packaging", null, true, STRING, GROUP_NAME_COORDINATES),
+        field("foo", "Foo", null, true, STRING, "bar")));
 
-    assertThat(def.getAssetFields(),
-        contains(field("classifier", "Classifier", null, true, STRING), field("extension", "Extension", null, false, STRING)));
+    assertThat(def.getAssetFields(), contains(
+        field("classifier", "Classifier", null, true, STRING, null),
+        field("extension", "Extension", null, false, STRING, null)));
   }
 
   @Test
@@ -258,10 +266,12 @@ public class MavenUploadHandlerTest
 
     List<VariableSource> sources = captor.getAllValues();
 
-    assertVariableSource(sources.get(0), "/org/apache/maven/tomcat/5.0.28/tomcat-5.0.28.jar", "org.apache.maven",
+    assertVariableSource(sources.get(0), "org/apache/maven/tomcat/5.0.28/tomcat-5.0.28.jar", "org.apache.maven",
         "tomcat", "5.0.28", null, "jar");
-    assertVariableSource(sources.get(1), "/org/apache/maven/tomcat/5.0.28/tomcat-5.0.28-sources.jar",
+    assertVariableSource(sources.get(1), "org/apache/maven/tomcat/5.0.28/tomcat-5.0.28-sources.jar",
         "org.apache.maven", "tomcat", "5.0.28", "sources", "jar");
+
+    verify(mavenHostedFacet).rebuildMetadata("org.apache.maven", "tomcat", "5.0.28", false);
   }
 
   @Test
@@ -323,7 +333,8 @@ public class MavenUploadHandlerTest
     }
     catch (ValidationErrorsException e) {
       assertThat(e.getValidationErrors().size(), is(1));
-      assertThat(e.getValidationErrors().get(0).getMessage(), is("Not authorized for requested path 'org/apache/maven/tomcat/5.0.28/tomcat-5.0.28.jar'"));
+      assertThat(e.getValidationErrors().get(0).getMessage(),
+          is("Not authorized for requested path 'org/apache/maven/tomcat/5.0.28/tomcat-5.0.28.jar'"));
     }
   }
 
@@ -349,7 +360,8 @@ public class MavenUploadHandlerTest
     }
     catch (ValidationErrorsException e) {
       assertThat(e.getValidationErrors().size(), is(1));
-      assertThat(e.getValidationErrors().get(0).getMessage(), is("Version policy mismatch, cannot upload SNAPSHOT content to RELEASE repositories for file '0'"));
+      assertThat(e.getValidationErrors().get(0).getMessage(),
+          is("Version policy mismatch, cannot upload SNAPSHOT content to RELEASE repositories for file '0'"));
     }
   }
 
@@ -375,7 +387,8 @@ public class MavenUploadHandlerTest
     }
     catch (ValidationErrorsException e) {
       assertThat(e.getValidationErrors().size(), is(1));
-      assertThat(e.getValidationErrors().get(0).getMessage(), is("Upload to snapshot repositories not supported, use the maven client."));
+      assertThat(e.getValidationErrors().get(0).getMessage(),
+          is("Upload to snapshot repositories not supported, use the maven client."));
     }
   }
 
@@ -406,6 +419,25 @@ public class MavenUploadHandlerTest
     path = paths.get(1);
     assertThat(path.getPath(), is("aParentGroupId/anArtifactId/2.0/anArtifactId-2.0.pom.sha1"));
     assertCoordinates(path.getCoordinates(), "aParentGroupId", "anArtifactId", "2.0", null, "pom.sha1");
+  }
+
+  /**
+   * Test added to address NEXUS-18196 which was fixed parsing large pom files
+   * see, https://github.com/codehaus-plexus/plexus-utils/commit/dd1c85f268f2e56cf0b8b4116119738431c98522
+   */
+  @Test
+  public void testAddingLargePom() throws Exception {
+    when(tempBlob.get()).thenReturn(getClass().getResourceAsStream("large_pom.xml"));
+    ComponentUpload componentUpload = new ComponentUpload();
+
+    AssetUpload assetUpload = new AssetUpload();
+    assetUpload.setPayload(jarPayload);
+    assetUpload.setFields(Collections.singletonMap("extension", "pom"));
+    componentUpload.getAssetUploads().add(assetUpload);
+
+    UploadResponse uploadResponse = underTest.handle(repository, componentUpload);
+
+    assertThat(uploadResponse.getAssetPaths(), is(notNullValue()));
   }
 
   @Test
@@ -523,6 +555,107 @@ public class MavenUploadHandlerTest
     underTest.validatePom(model);
   }
 
+  @Test
+  public void testHandle_doubleDotInGroupId() throws IOException {
+    ComponentUpload componentUpload = new ComponentUpload();
+
+    componentUpload.getFields().put("groupId", "foo/../g/a/v/a-v.jar");
+    componentUpload.getFields().put("artifactId", "artifactId");
+    componentUpload.getFields().put("version", "version");
+
+    AssetUpload assetUpload = new AssetUpload();
+    assetUpload.getFields().put("extension", "jar");
+    assetUpload.setPayload(jarPayload);
+    componentUpload.getAssetUploads().add(assetUpload);
+
+    underTest.handle(repository, componentUpload);
+
+    ArgumentCaptor<MavenPath> pathCapture = ArgumentCaptor.forClass(MavenPath.class);
+    verify(mavenFacet, times(2)).put(pathCapture.capture(), any(Payload.class));
+
+    List<MavenPath> paths = pathCapture.getAllValues();
+
+    assertThat(paths, hasSize(2));
+
+    MavenPath path = paths.get(0);
+    assertNotNull(path);
+    assertThat(path.getPath(), is("foo////g/a/v/a-v/jar/artifactId/version/artifactId-version.jar"));
+    assertCoordinates(path.getCoordinates(), "foo....g.a.v.a-v.jar", "artifactId", "version", null, "jar");
+
+  }
+
+  @Test
+  public void testHandle_doubleDotInArtifactId() throws IOException {
+    ComponentUpload componentUpload = new ComponentUpload();
+
+    componentUpload.getFields().put("groupId", "groupId");
+    componentUpload.getFields().put("artifactId", "/../g/a/v/a-v.jar");
+    componentUpload.getFields().put("version", "version");
+
+    AssetUpload assetUpload = new AssetUpload();
+    assetUpload.getFields().put("extension", "jar");
+    assetUpload.setPayload(jarPayload);
+    componentUpload.getAssetUploads().add(assetUpload);
+
+    try {
+      underTest.handle(repository, componentUpload);
+      fail("Expected ValidationErrorsException");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(),
+          is("Path is not allowed to have '.' or '..' segments: 'groupId//../g/a/v/a-v.jar/version//../g/a/v/a-v.jar-version.jar'"));
+    }
+  }
+
+  @Test
+  public void testHandle_doubleDotInVersion() throws IOException {
+    ComponentUpload componentUpload = new ComponentUpload();
+
+    componentUpload.getFields().put("groupId", "groupId");
+    componentUpload.getFields().put("artifactId", "artifactId");
+    componentUpload.getFields().put("version", "/../g/a/v/a-v.jar");
+
+    AssetUpload assetUpload = new AssetUpload();
+    assetUpload.getFields().put("extension", "jar");
+    assetUpload.setPayload(jarPayload);
+    componentUpload.getAssetUploads().add(assetUpload);
+
+    try {
+      underTest.handle(repository, componentUpload);
+      fail("Expected ValidationErrorsException");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(),
+          is("Path is not allowed to have '.' or '..' segments: 'groupId/artifactId//../g/a/v/a-v.jar/artifactId-/../g/a/v/a-v.jar.jar'"));
+    }
+  }
+
+  @Test
+  public void testHandle_doubleDotInExtension() throws IOException {
+    ComponentUpload componentUpload = new ComponentUpload();
+
+    componentUpload.getFields().put("groupId", "groupId");
+    componentUpload.getFields().put("artifactId", "artifactId");
+    componentUpload.getFields().put("version", "version");
+
+    AssetUpload assetUpload = new AssetUpload();
+    assetUpload.getFields().put("extension", "/../g/a/v/a-v.jar");
+    assetUpload.setPayload(jarPayload);
+    componentUpload.getAssetUploads().add(assetUpload);
+
+    try {
+      underTest.handle(repository, componentUpload);
+      fail("Expected ValidationErrorsException");
+    }
+    catch (ValidationErrorsException e) {
+      assertThat(e.getValidationErrors().size(), is(1));
+      assertThat(e.getValidationErrors().get(0).getMessage(),
+          is("Path is not allowed to have '.' or '..' segments: 'groupId/artifactId/version/artifactId-version./../g/a/v/a-v.jar'"));
+    }
+  }
+
   private static void assertVariableSource(final VariableSource source,
                                            final String path,
                                            final String groupId,
@@ -566,20 +699,23 @@ public class MavenUploadHandlerTest
                                       final String displayName,
                                       final String helpText,
                                       final boolean optional,
-                                      final Type type)
+                                      final Type type,
+                                      final String group)
   {
-    return new UploadFieldDefinition(name, displayName, helpText, optional, type);
+    return new UploadFieldDefinition(name, displayName, helpText, optional, type, group);
   }
 
   private Set<UploadDefinitionExtension> getDefinitionExtensions() {
     return singleton(new TestUploadDefinitionExtension());
   }
 
-  private class TestUploadDefinitionExtension implements UploadDefinitionExtension {
+  private class TestUploadDefinitionExtension
+      implements UploadDefinitionExtension
+  {
 
     @Override
     public UploadFieldDefinition contribute() {
-      return new UploadFieldDefinition("foo", "Foo", null, true, STRING);
+      return new UploadFieldDefinition("foo", "Foo", null, true, STRING, "bar");
     }
   }
 }

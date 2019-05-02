@@ -33,7 +33,8 @@ Ext.define('NX.coreui.controller.Blobstores', {
   ],
   stores: [
     'Blobstore',
-    'BlobstoreType'
+    'BlobstoreType',
+    'BlobStoreQuotaType'
   ],
   views: [
     'blobstore.BlobstoreAdd',
@@ -74,7 +75,7 @@ Ext.define('NX.coreui.controller.Blobstores', {
         variants: ['x16', 'x32']
       },
       visible: function() {
-        return NX.Permissions.check('nexus:blobstores:read') && NX.State.getUser();
+        return NX.Permissions.check('nexus:blobstores:read') && !Ext.isEmpty(NX.State.getUser());
       }
     };
 
@@ -98,8 +99,19 @@ Ext.define('NX.coreui.controller.Blobstores', {
         'nx-coreui-blobstore-list button[action=new]': {
           click: me.showAddWindow
         },
+        'nx-coreui-blobstore-settings button[action=save]': {
+          click: me.updateBlobstore
+        },
+        'nx-coreui-blobstore-feature button[action=promoteToGroup]': {
+          click: me.promoteToGroup,
+          afterrender: me.bindIfUpdatableAndGroupsEnabled
+        },
         'nx-coreui-blobstore-settings-form': {
           submitted: me.loadStores
+        },
+        //Note that this component is from the Task UI
+        'combobox[name=property_fromGroup]': {
+          change: me.fromGroupChanged
         }
       }
     });
@@ -122,31 +134,59 @@ Ext.define('NX.coreui.controller.Blobstores', {
   },
 
   /**
-   * @override
+   * @protected
+   * Enable 'Delete' when user has 'delete' permission for selected blobstore.
    */
-  bindDeleteButton: function (button) {
+  bindDeleteButton: function(button) {
     var me = this;
+
     button.mon(
-      NX.Conditions.and(
-        NX.Conditions.isPermitted(this.permission + ':delete'),
-        NX.Conditions.gridHasSelection('nx-coreui-blobstore-list', function(model) {
-          var repositoryUseCount = model.get('repositoryUseCount');
-          if (repositoryUseCount > 0) {
-            me.showInfo(NX.I18n.format('Blobstore_BlobstoreFeature_Delete_Disabled_Message',
-                Ext.util.Format.plural(repositoryUseCount, 'repository', 'repositories')));
+        NX.Conditions.and(
+            NX.Conditions.isPermitted(this.permission + ':delete'),
+            NX.Conditions.watchEvents([
+              { observable: me.getStore('Blobstore'), events: ['load']},
+              { observable: Ext.History, events: ['change']}
+            ], me.watchEventsHandler())
+        ),
+        {
+          satisfied: function () {
+            button.enable();
+          },
+          unsatisfied: function () {
+            button.disable();
           }
-          else {
-            me.clearInfo();
-          }
-          return !repositoryUseCount > 0;
-        })
-      ),
-      {
-        satisfied: button.enable,
-        unsatisfied: button.disable,
-        scope: button
-      }
+        }
     );
+  },
+
+  /**
+   * @private
+   */
+  watchEventsHandler: function () {
+    var me = this,
+        store = me.getStore('Blobstore');
+
+    return function() {
+      var blobstoreId = me.getModelIdFromBookmark(),
+          model = blobstoreId ? store.findRecord('name', blobstoreId, 0, false, true, true) : undefined;
+
+      if (model) {
+        var inUse = model.get('inUse');
+        if (inUse) {
+          var repositoryUseCount = model.get('repositoryUseCount');
+          var blobStoreUseCount = model.get('blobStoreUseCount');
+          me.showInfo(NX.I18n.format('Blobstore_BlobstoreFeature_Delete_Disabled_Message',
+                     Ext.util.Format.plural(repositoryUseCount, 'repository', 'repositories'),
+                     Ext.util.Format.plural(blobStoreUseCount, 'other blob store', 'other blob stores')));
+          return false;
+        }
+
+        me.clearInfo();
+        return true;
+      }
+
+      return false;
+    };
   },
 
   /**
@@ -157,7 +197,7 @@ Ext.define('NX.coreui.controller.Blobstores', {
 
     // Show the first panel in the create wizard, and set the breadcrumb
     me.setItemName(1, NX.I18n.get('Blobstores_Create_Title'));
-    me.loadCreateWizard(1, true, Ext.create('widget.nx-coreui-blobstore-add'));
+    me.loadCreateWizard(1, Ext.create('widget.nx-coreui-blobstore-add'));
   },
 
   /**
@@ -168,8 +208,42 @@ Ext.define('NX.coreui.controller.Blobstores', {
         list = me.getList();
 
     if (list) {
+      me.getStore('Blobstore').clearFilter();
       me.getStore('BlobstoreType').load();
+      me.getStore('BlobStoreQuotaType').load();
     }
+  },
+
+  /**
+   * @private
+   * Updates blobstore.
+   */
+  updateBlobstore: function(button) {
+    var me = this,
+        form = button.up('form'),
+        values = form.getValues();
+
+    NX.Dialogs.askConfirmation(NX.I18n.get('Blobstore_BlobstoreFeature_Update_Title'),
+                               NX.I18n.get('Blobstore_BlobstoreFeature_Update_Warning'),
+                               function () {
+      me.getContent().getEl().mask(NX.I18n.get('Blobstores_Update_Mask'));
+      NX.direct.coreui_Blobstore.update(values, function(response) {
+        me.getContent().getEl().unmask();
+        if (Ext.isObject(response)) {
+          if (response.success) {
+            NX.Messages.add({
+              text: NX.I18n.format('Blobstores_Update_Success',
+                  me.getDescription(me.getBlobstoreModel().create(response.data))),
+              type: 'success'
+            });
+            me.getStore('Blobstore').load();
+          }
+          else if (Ext.isDefined(response.errors)) {
+            form.markInvalid(response.errors);
+          }
+        }
+      });
+    }, {scope: me});
   },
 
   /**
@@ -187,6 +261,98 @@ Ext.define('NX.coreui.controller.Blobstores', {
         NX.Messages.add({ text: 'Blobstore deleted: ' + description, type: 'success' });
       }
     });
-  }
+  },
 
+  /**
+   * @private
+   * Converts file blob store to group.
+   */
+  promoteToGroup: function(button) {
+    var me = this,
+        model = me.getList().getSelectionModel().getLastSelected();
+    NX.direct.coreui_Blobstore.promoteToGroup(model.get('name'), function (response) {
+      if (Ext.isObject(response) && response.success) {
+        NX.Messages.add({
+          text: NX.I18n.format('Blobstore_BlobstoreFeature_Promote_Success', response.data.name),
+          type: 'success'
+        });
+        me.getStore('Blobstore').load();
+        button.disable();
+      }
+    });
+  },
+
+  /**
+   * @private
+   */
+  watchEventsForNonGroups: function () {
+    var me = this,
+        store = me.getStore('Blobstore');
+
+    return function() {
+      var blobstoreId = me.getModelIdFromBookmark(),
+          model = blobstoreId ? store.findRecord('name', blobstoreId, 0, false, true, true) : undefined;
+
+      if (model) {
+        return model.get('promotable');
+      }
+
+      return false;
+    };
+  },
+
+  /**
+   * @private
+   * checks that blobstore is not a blobstore group and that user has permissions before activating button
+   */
+  bindIfUpdatableAndGroupsEnabled: function(button) {
+    var me = this;
+
+    button.mon(
+        NX.Conditions.and(
+            NX.Conditions.isPermitted(this.permission + ':update'),
+            NX.Conditions.watchEvents([
+              { observable: me.getStore('Blobstore'), events: ['load']},
+              { observable: Ext.History, events: ['change']}
+            ], me.watchEventsForNonGroups())
+        ),
+        {
+          satisfied: function () {
+            button.enable();
+          },
+          unsatisfied: function () {
+            button.disable();
+          }
+        }
+    );
+
+    // check that Groups are enabled before showing the promote button
+    button.mon(
+        NX.Conditions.watchEvents([
+          { observable: me.getStore('BlobstoreType'), events: ['load']},
+          { observable: Ext.History, events: ['change']}
+        ], function() {
+          return me.getStore('BlobstoreType').findRecord('name', 'Group', false, true, true) != null;
+        }),
+        {
+          satisfied: function () {
+            button.show();
+          },
+          unsatisfied: function () {
+            button.hide();
+          }
+        }
+    );
+  },
+
+  fromGroupChanged: function(groupComboBox, newVal, old) {
+    var members = groupComboBox.up().query('[name=property_memberToRemove]')[0];
+    var selectedGroup = groupComboBox.getStore().getById(newVal);
+    var data = Ext.Array.map(selectedGroup.data.attributes.group.members, function(m) {return {name: m, id: m};});
+    members.setValue(null);
+    members.getStore().setData(data);
+    if(!old) {
+      members.reset();
+    }
+  }
 });

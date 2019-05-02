@@ -28,6 +28,9 @@ Ext.define('NX.coreui.view.component.AssetAttributes', {
 
   manageHeight: false,
 
+  disableSelection: true,
+  rowLines: false,
+
   /**
    * model to display
    */
@@ -50,7 +53,11 @@ Ext.define('NX.coreui.view.component.AssetAttributes', {
       {
         text: 'label',
         flex: 1,
-        dataIndex: 'label'
+        dataIndex: 'label',
+        renderer: function(value, metaData) {
+          metaData.tdAttr = 'data-qtip="' + value + '"';
+          return value;
+        }
       },
       {
         text: 'Value',
@@ -84,7 +91,6 @@ Ext.define('NX.coreui.view.component.AssetAttributes', {
     me.assetModel = assetModel;
 
     // update the grid attribute data
-    store.data.clear();
     store.removeAll();
     Ext.iterate(me.assetModel.get('attributes'), function(facet, facetValues) {
       Ext.iterate(facetValues, function(key, value) {

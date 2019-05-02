@@ -12,6 +12,10 @@
  */
 package org.sonatype.nexus.repository.security;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -19,26 +23,43 @@ import org.sonatype.goodies.testsupport.TestSupport;
 import org.sonatype.nexus.repository.Format;
 import org.sonatype.nexus.repository.Repository;
 import org.sonatype.nexus.security.SecurityHelper;
+import org.sonatype.nexus.security.privilege.ApplicationPermission;
 import org.sonatype.nexus.selector.SelectorConfiguration;
 import org.sonatype.nexus.selector.SelectorManager;
 
+import org.apache.shiro.authz.Permission;
 import org.apache.shiro.subject.Subject;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.mockito.Mock;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
+import static org.hamcrest.Matchers.contains;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.anyVararg;
+import static org.mockito.Matchers.eq;
+import static org.mockito.Matchers.same;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.sonatype.nexus.security.BreadActions.BROWSE;
+import static org.sonatype.nexus.security.BreadActions.EDIT;
 import static org.sonatype.nexus.security.BreadActions.READ;
 
 public class RepositoryPermissionCheckerTest
     extends TestSupport
 {
   private static final String REPOSITORY_NAME = "repositoryName";
+
+  private static final String REPOSITORY_NAME_1 = "repositoryName1";
+
+  private static final String REPOSITORY_NAME_2 = "repositoryName2";
 
   private static final String REPOSITORY_FORMAT = "repositoryFormat";
 
@@ -48,8 +69,17 @@ public class RepositoryPermissionCheckerTest
 
   private static final boolean HAS_SELECTOR_PERMISSION = true;
 
+  @Rule
+  public ExpectedException thrown = ExpectedException.none();
+
   @Mock
   private Repository repository;
+
+  @Mock
+  private Repository repository1;
+
+  @Mock
+  private Repository repository2;
 
   @Mock
   private Format format;
@@ -72,24 +102,90 @@ public class RepositoryPermissionCheckerTest
   public void setup() {
     when(repository.getName()).thenReturn(REPOSITORY_NAME);
     when(repository.getFormat()).thenReturn(format);
+    when(repository1.getName()).thenReturn(REPOSITORY_NAME_1);
+    when(repository1.getFormat()).thenReturn(format);
+    when(repository2.getName()).thenReturn(REPOSITORY_NAME_2);
+    when(repository2.getFormat()).thenReturn(format);
     when(format.getValue()).thenReturn(REPOSITORY_FORMAT);
 
     when(selector.getName()).thenReturn(SELECTOR_NAME);
     when(selectorManager.browse()).thenReturn(asList(selector));
+    when(selectorManager.browseActive(Arrays.asList(REPOSITORY_NAME_1, REPOSITORY_NAME_2),
+        Collections.singletonList(REPOSITORY_FORMAT))).thenReturn(asList(selector));
 
+    when(securityHelper.isPermitted(same(subject), anyVararg())).thenReturn(new boolean[] { true, false, false });
     when(securityHelper.subject()).thenReturn(subject);
 
     underTest = new RepositoryPermissionChecker(securityHelper, selectorManager);
   }
 
   @Test
-  public void testUserCanViewRepository() {
-    verifyUserAccessOf(underTest::userCanViewRepository, READ);
+  public void testUserCanBrowseRepository() {
+    verifyUserAccessOf(underTest::userCanBrowseRepository, BROWSE);
   }
 
   @Test
-  public void testUserCanBrowseRepository() {
-    verifyUserAccessOf(underTest::userCanBrowseRepository, BROWSE);
+  public void testUserCanBrowseRepositories() {
+    when(securityHelper.anyPermitted(eq(subject), any(RepositoryContentSelectorPermission.class))).then(i -> {
+      RepositoryContentSelectorPermission p = (RepositoryContentSelectorPermission) i.getArguments()[1];
+      return REPOSITORY_NAME_2.equals(p.getName());
+    });
+    List<Repository> permittedRepositories = underTest.userCanBrowseRepositories(repository, repository1, repository2);
+
+    assertThat(permittedRepositories, contains(repository, repository2));
+
+    // Iterable version
+    permittedRepositories = underTest.userCanBrowseRepositories(Arrays.asList(repository, repository1, repository2));
+
+    assertThat(permittedRepositories, contains(repository, repository2));
+  }
+
+  @Test
+  public void testUserHasRepositoryAdminPermission() {
+    List<Repository> permittedRepositories =
+        underTest.userHasRepositoryAdminPermission(Arrays.asList(repository, repository1, repository2), READ);
+
+    assertThat(permittedRepositories, contains(repository));
+
+    verify(securityHelper).isPermitted(subject,
+        createAdminPermissions(READ, RepositoryAdminPermission::new, repository, repository1, repository2));
+  }
+
+  @Test
+  public void testEnsureUserHasPermissionOrAdminAccessToAny() {
+    Permission[] repositoryPermissions =
+        createAdminPermissions(READ, RepositoryAdminPermission::new, repository, repository1, repository2);
+    ApplicationPermission appPerm = new ApplicationPermission("blobstores", READ);
+    when(securityHelper.anyPermitted(subject, appPerm)).thenReturn(true);
+    underTest.ensureUserHasPermissionOrAdminAccessToAny(appPerm, READ, Arrays.asList(repository, repository1, repository2));
+    verify(securityHelper, never()).ensureAnyPermitted(any());
+
+    when(securityHelper.anyPermitted(subject, appPerm)).thenReturn(false);
+    underTest.ensureUserHasPermissionOrAdminAccessToAny(appPerm, READ, Arrays.asList(repository, repository1, repository2));
+
+    verify(securityHelper).ensureAnyPermitted(subject, repositoryPermissions);
+  }
+
+  @Test
+  public void testEnsureUserHasAdminAccessToAny() {
+    Permission[] repositoryPermissions =
+        createAdminPermissions(EDIT, RepositoryAdminPermission::new, repository, repository1);
+
+    underTest.ensureUserHasAdminAccessToAny(EDIT, Arrays.asList(repository, repository1));
+
+    verify(securityHelper).ensureAnyPermitted(subject, repositoryPermissions);
+  }
+
+  private Permission[] createAdminPermissions(
+      final String action,
+      final BiFunction<Repository, String[], Permission> constructor,
+      final Repository... repositories)
+  {
+    List<Permission> permissions = new ArrayList<>();
+    for (Repository repository : repositories) {
+      permissions.add(constructor.apply(repository, new String[]{action}));
+    }
+    return permissions.toArray(new Permission[permissions.size()]);
   }
 
   private void verifyUserAccessOf(final Function<Repository, Boolean> accessCheck,

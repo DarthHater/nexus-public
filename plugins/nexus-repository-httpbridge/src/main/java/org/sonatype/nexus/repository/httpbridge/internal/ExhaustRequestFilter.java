@@ -54,8 +54,17 @@ public class ExhaustRequestFilter
   private final Pattern exhaustForAgentsPattern;
 
   @Inject
-  public ExhaustRequestFilter(@Named("${nexus.view.exhaustForAgents:-Apache-Maven.*}") final String exhaustForAgents) {
+  public ExhaustRequestFilter(
+      @Named("${nexus.view.exhaustForAgents:-Apache-Maven.*|Apache Ivy.*}") final String exhaustForAgents)
+  {
+    /*
+      NOTE: An exhaustForAgents pattern delimited by "\\s,\\s" is supported for backwards-compatibility reasons but
+            using a pattern that is instead pipe-delimited is recommended.
+     */
     this.exhaustForAgentsPattern = Pattern.compile(exhaustForAgents.replace("\\s,\\s", "|"));
+    if (log.isDebugEnabled()) {
+      log.debug("nexus.view.exhaustForAgents={}", exhaustForAgentsPattern.pattern());
+    }
   }
 
   @Override
@@ -96,6 +105,12 @@ public class ExhaustRequestFilter
       HttpServletRequest httpRequest = (HttpServletRequest) request;
       HttpServletResponse httpResponse = (HttpServletResponse) response;
 
+      if (log.isTraceEnabled()) {
+        final String agent = httpRequest.getHeader(HttpHeaders.USER_AGENT);
+        log.trace("status: {}, method: {}, agent: {}, match: {}", httpResponse.getStatus(), httpRequest.getMethod(),
+            agent, agent != null && exhaustForAgentsPattern.matcher(agent).matches());
+      }
+
       // only needed when an error occurs...
       if (httpResponse.getStatus() >= 400) {
         String method = httpRequest.getMethod();
@@ -107,6 +122,11 @@ public class ExhaustRequestFilter
         }
       }
     }
+
+    if (log.isTraceEnabled()) {
+      log.trace("req: {}, resp: {}", request.getClass(), response.getClass());
+    }
+
     return false;
   }
 }

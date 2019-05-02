@@ -16,13 +16,15 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
 import java.nio.file.FileSystemException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.sonatype.goodies.testsupport.TestSupport;
 import org.sonatype.nexus.blobstore.DefaultBlobIdLocationResolver;
@@ -31,10 +33,10 @@ import org.sonatype.nexus.blobstore.api.BlobId;
 import org.sonatype.nexus.blobstore.api.BlobMetrics;
 import org.sonatype.nexus.blobstore.api.BlobStoreConfiguration;
 import org.sonatype.nexus.blobstore.api.BlobStoreMetrics;
-import org.sonatype.nexus.blobstore.file.internal.BlobStoreMetricsStore;
-import org.sonatype.nexus.blobstore.file.internal.BlobStoreMetricsStoreImpl;
+import org.sonatype.nexus.blobstore.file.internal.FileBlobStoreMetricsStore;
 import org.sonatype.nexus.blobstore.file.internal.SimpleFileOperations;
-import org.sonatype.nexus.blobstore.internal.PeriodicJobServiceImpl;
+import org.sonatype.nexus.scheduling.internal.PeriodicJobServiceImpl;
+import org.sonatype.nexus.blobstore.quota.BlobStoreQuotaService;
 import org.sonatype.nexus.common.app.ApplicationDirectories;
 import org.sonatype.nexus.common.io.DirectoryHelper;
 import org.sonatype.nexus.common.log.DryRunPrefix;
@@ -54,6 +56,7 @@ import static com.jayway.awaitility.Awaitility.await;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.commons.lang3.tuple.Pair.of;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
@@ -85,6 +88,8 @@ public class FileBlobStoreIT
 
   private static final int METRICS_FLUSH_TIMEOUT = 5;
 
+  private static final int QUOTA_CHECK_INTERVAL = 5;
+
   public static final ImmutableMap<String, String> TEST_HEADERS = ImmutableMap.of(
       CREATED_BY_HEADER, "test",
       BLOB_NAME_HEADER, "test/randomData.bin"
@@ -102,7 +107,7 @@ public class FileBlobStoreIT
 
   private Path contentDirectory;
 
-  private BlobStoreMetricsStore metricsStore;
+  private FileBlobStoreMetricsStore metricsStore;
 
   private SimpleFileOperations fileOperations;
 
@@ -114,6 +119,9 @@ public class FileBlobStoreIT
   @Mock
   DryRunPrefix dryRunPrefix;
 
+  @Mock
+  private BlobStoreQuotaService quotaService;
+
   @Before
   public void setUp() throws Exception {
     when(nodeAccess.getId()).thenReturn(UUID.randomUUID().toString());
@@ -123,9 +131,10 @@ public class FileBlobStoreIT
     contentDirectory = blobStoreDirectory.resolve("content");
     when(applicationDirectories.getWorkDirectory(anyString())).thenReturn(blobStoreDirectory.toFile());
 
-    metricsStore = new BlobStoreMetricsStoreImpl(new PeriodicJobServiceImpl(), nodeAccess);
-
     fileOperations = spy(new SimpleFileOperations());
+
+    metricsStore = new FileBlobStoreMetricsStore(new PeriodicJobServiceImpl(), nodeAccess, quotaService,
+        QUOTA_CHECK_INTERVAL, fileOperations);
 
     blobIdResolver = new DefaultBlobIdLocationResolver();
 
@@ -229,6 +238,24 @@ public class FileBlobStoreIT
   }
 
   @Test
+  public void testExistsMethodForDirectPathBlob() {
+    byte[] content = "hello".getBytes();
+    final ImmutableMap<String, String> DIRECT_PATH_HEADERS = ImmutableMap.of(
+        CREATED_BY_HEADER, "test",
+        BLOB_NAME_HEADER, "health-check/repositoryName/file.txt",
+        DIRECT_PATH_BLOB_HEADER, "true"
+    );
+    BlobId blobId = blobIdResolver.fromHeaders(DIRECT_PATH_HEADERS);
+    //At this point the exist test should return false
+    assertThat(underTest.exists(blobId), is(false));
+
+    final Blob blob = underTest.create(new ByteArrayInputStream(content), DIRECT_PATH_HEADERS);
+    assertThat(blobId.asUniqueString(), is(blob.getId().asUniqueString()));
+    //Now the exist test should be true
+    assertThat(underTest.exists(blob.getId()), is(true));
+  }
+
+  @Test
   public void getDirectPathBlobIdStreamSuccess() throws IOException {
     byte[] content = "hello".getBytes();
     Blob blob = underTest.create(new ByteArrayInputStream(content), ImmutableMap.of(
@@ -251,6 +278,24 @@ public class FileBlobStoreIT
     // this check is more salient when run on Windows but confirms that direct path BlobIds use unix style paths
     assertThat(blobId.asUniqueString().contains("\\"), is(false));
     assertThat(blobId.asUniqueString().contains("/"), is(true));
+  }
+
+  @Test
+  public void itWillReturnAllBlobIdsInTheStream() {
+    byte[] content = "hello".getBytes();
+    Blob regularBlob = underTest.create(new ByteArrayInputStream(content), ImmutableMap.of(
+        BLOB_NAME_HEADER, "example",
+        CREATED_BY_HEADER, "test"));
+
+    Blob directPathBlob = underTest.create(new ByteArrayInputStream(content), ImmutableMap.of(
+        CREATED_BY_HEADER, "test",
+        BLOB_NAME_HEADER, "health-check/repositoryName/file.txt",
+        DIRECT_PATH_BLOB_HEADER, "true"
+    ));
+
+    List<BlobId> blobIds = underTest.getBlobIdStream().collect(Collectors.toList());
+    assertThat(blobIds.size(), is(equalTo(2)));
+    assertThat(blobIds, containsInAnyOrder(regularBlob.getId(), directPathBlob.getId()));
   }
 
   @Test(expected = IllegalArgumentException.class)

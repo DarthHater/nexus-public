@@ -32,6 +32,20 @@ public interface DatabasePool
   ODatabaseDocumentTx acquire();
 
   /**
+   * Returns the number of available connections in the pool.
+   *
+   * @since 3.14
+   */
+  int getAvailableCount();
+
+  /**
+   * Returns the current number of connections in the pool.
+   *
+   * @since 3.14
+   */
+  int getPoolSize();
+
+  /**
    * Close the database pool.
    */
   void close();

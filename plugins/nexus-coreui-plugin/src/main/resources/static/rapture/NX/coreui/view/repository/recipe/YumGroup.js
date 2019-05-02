@@ -15,7 +15,7 @@
 /**
  * Repository "Settings" form for a Yum Group repository.
  *
- * @since yum.group
+ * @since 3.11
  */
 Ext.define('NX.coreui.view.repository.recipe.YumGroup', {
   extend: 'NX.coreui.view.repository.RepositorySettingsForm',

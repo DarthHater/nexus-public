@@ -13,7 +13,6 @@
 package org.sonatype.nexus.repository.rest.internal.resources;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -23,8 +22,6 @@ import javax.ws.rs.WebApplicationException;
 import org.sonatype.nexus.repository.Repository;
 import org.sonatype.nexus.repository.manager.RepositoryManager;
 import org.sonatype.nexus.repository.security.RepositoryPermissionChecker;
-
-import com.google.common.collect.Streams;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static java.util.Optional.ofNullable;
@@ -64,20 +61,14 @@ public class RepositoryManagerRESTAdapterImpl
       //browse implies complete access to the repository.
       return repository;
     }
-    else if (repositoryPermissionChecker.userCanViewRepository(repository)) {
-      //user knows the repository exists but does not have the appropriate permission to browse, return a 403
-      throw new WebApplicationException(FORBIDDEN);
-    }
     else {
-      //User does not know the repository exists because they can not VIEW or BROWSE, return a 404 
-      throw new NotFoundException("Unable to locate repository with id " + repositoryId);
+      //repository exists but user does not have the appropriate permission to browse, return a 403
+      throw new WebApplicationException(FORBIDDEN);
     }
   }
 
   @Override
   public List<Repository> getRepositories() {
-    return Streams.stream(repositoryManager.browse())
-        .filter(repositoryPermissionChecker::userCanBrowseRepository)
-        .collect(Collectors.toList());
+    return repositoryPermissionChecker.userCanBrowseRepositories(repositoryManager.browse());
   }
 }

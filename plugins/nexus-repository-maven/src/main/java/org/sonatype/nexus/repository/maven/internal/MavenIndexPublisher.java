@@ -23,11 +23,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeSet;
 
 import javax.annotation.Nonnull;
@@ -39,7 +37,9 @@ import org.sonatype.nexus.repository.maven.MavenFacet;
 import org.sonatype.nexus.repository.maven.MavenPath;
 import org.sonatype.nexus.repository.maven.MavenPath.SignatureType;
 import org.sonatype.nexus.repository.maven.internal.Attributes.AssetKind;
+import org.sonatype.nexus.repository.maven.internal.filter.DuplicateDetectionStrategy;
 import org.sonatype.nexus.repository.proxy.ProxyFacet;
+import org.sonatype.nexus.repository.storage.StorageFacet;
 import org.sonatype.nexus.repository.storage.StorageTx;
 import org.sonatype.nexus.repository.types.ProxyType;
 import org.sonatype.nexus.repository.view.Content;
@@ -80,6 +80,8 @@ import static org.apache.maven.index.reader.Utils.descriptor;
 import static org.apache.maven.index.reader.Utils.rootGroup;
 import static org.apache.maven.index.reader.Utils.rootGroups;
 import static org.sonatype.nexus.repository.http.HttpMethods.GET;
+import static org.sonatype.nexus.repository.maven.internal.Constants.INDEX_MAIN_CHUNK_FILE_PATH;
+import static org.sonatype.nexus.repository.maven.internal.Constants.INDEX_PROPERTY_FILE_PATH;
 import static org.sonatype.nexus.repository.storage.AssetEntityAdapter.P_ASSET_KIND;
 import static org.sonatype.nexus.repository.storage.MetadataNodeEntityAdapter.P_BUCKET;
 
@@ -92,9 +94,9 @@ public final class MavenIndexPublisher
 {
   private static final Logger log = LoggerFactory.getLogger(MavenIndexPublisher.class);
 
-  private static final String INDEX_PROPERTY_FILE = "/.index/nexus-maven-repository-index.properties";
+  private static final String INDEX_PROPERTY_FILE = "/" + INDEX_PROPERTY_FILE_PATH;
 
-  private static final String INDEX_MAIN_CHUNK_FILE = "/.index/nexus-maven-repository-index.gz";
+  private static final String INDEX_MAIN_CHUNK_FILE = "/" + INDEX_MAIN_CHUNK_FILE_PATH;
 
   private static final String SELECT_HOSTED_ARTIFACTS =
       "SELECT " +
@@ -161,39 +163,25 @@ public final class MavenIndexPublisher
   /**
    * Publishes MI index into {@code target}, sourced from {@code repositories} repositories.
    */
-  public static void publishMergedIndex(final Repository target, final List<Repository> repositories)
+  public static void publishMergedIndex(final Repository target,
+                                        final List<Repository> repositories,
+                                        final DuplicateDetectionStrategy<Record> duplicateDetectionStrategy)
       throws IOException
   {
     checkNotNull(target);
     checkNotNull(repositories);
     Closer closer = Closer.create();
-    try {
-      List<Iterable<Record>> records = new ArrayList<>();
-      for (Repository repository : repositories) {
-        try {
-          ResourceHandler resourceHandler = closer.register(new Maven2WritableResourceHandler(repository));
-          IndexReader indexReader = closer.register(new IndexReader(null, resourceHandler));
-          ChunkReader chunkReader = closer.register(indexReader.iterator().next());
-          records.add(filter(transform(chunkReader, RECORD_EXPANDER::apply), new RecordTypeFilter(Type.ARTIFACT_ADD)));
-        }
-        catch (IllegalArgumentException e) {
-          throw new IOException(e.getMessage(), e);
-        }
-      }
-
-      try (Maven2WritableResourceHandler resourceHandler = new Maven2WritableResourceHandler(target)) {
-        try (IndexWriter indexWriter = new IndexWriter(resourceHandler, target.getName(), false)) {
-          indexWriter.writeChunk(
-              transform(
-                  decorate(
-                      filter(concat(records), new UniqueFilter()),
-                      target.getName()
-                  ),
-                  RECORD_COMPACTOR::apply
-              ).iterator()
-          );
-        }
-      }
+    try (Maven2WritableResourceHandler resourceHandler = new Maven2WritableResourceHandler(target);
+         IndexWriter indexWriter = new IndexWriter(resourceHandler, target.getName(), false)) {
+      indexWriter.writeChunk(
+          transform(
+              decorate(
+                  filter(concat(getGroupRecords(repositories, closer)), duplicateDetectionStrategy),
+                  target.getName()
+              ),
+              RECORD_COMPACTOR::apply
+          ).iterator()
+      );
     }
     catch (Throwable t) {
       throw closer.rethrow(t);
@@ -206,7 +194,10 @@ public final class MavenIndexPublisher
   /**
    * Publishes MI index into {@code target}, sourced from repository's own CMA structures.
    */
-  public static void publishHostedIndex(final Repository repository) throws IOException {
+  public static void publishHostedIndex(final Repository repository,
+                                        final DuplicateDetectionStrategy<Record> duplicateDetectionStrategy)
+      throws IOException
+  {
     checkNotNull(repository);
     Transactional.operation.throwing(IOException.class).call(
         () -> {
@@ -216,7 +207,7 @@ public final class MavenIndexPublisher
               indexWriter.writeChunk(
                   transform(
                       decorate(
-                          filter(getHostedRecords(tx, repository), new UniqueFilter()),
+                          filter(getHostedRecords(tx, repository), duplicateDetectionStrategy),
                           repository.getName()
                       ),
                       RECORD_COMPACTOR::apply
@@ -266,6 +257,33 @@ public final class MavenIndexPublisher
     );
   }
 
+  private static Iterable<Iterable<Record>> getGroupRecords(final List<Repository> repositories, final Closer closer)
+      throws IOException
+  {
+    UnitOfWork paused = UnitOfWork.pause();
+    try {
+      List<Iterable<Record>> records = new ArrayList<>();
+      for (Repository repository : repositories) {
+        UnitOfWork.begin(repository.facet(StorageFacet.class).txSupplier());
+        try {
+          ResourceHandler resourceHandler = closer.register(new Maven2WritableResourceHandler(repository));
+          IndexReader indexReader = closer.register(new IndexReader(null, resourceHandler));
+          ChunkReader chunkReader = closer.register(indexReader.iterator().next());
+          records.add(filter(transform(chunkReader, RECORD_EXPANDER::apply), new RecordTypeFilter(Type.ARTIFACT_ADD)));
+        }
+        catch (IllegalArgumentException e) {
+          throw new IOException(e.getMessage(), e);
+        }
+        finally {
+          UnitOfWork.end();
+        }
+      }
+      return records;
+    }
+    finally {
+      UnitOfWork.resume(paused);
+    }
+  }
 
   /**
    * Converts orient SQL query result into Maven Indexer Reader {@link Record}. Should be invoked only with documents
@@ -310,12 +328,7 @@ public final class MavenIndexPublisher
                                      final MavenPath tocheck,
                                      final MavenFacet mavenFacet)
   {
-    try {
-      record.put(key, mavenFacet.get(tocheck) != null ? Boolean.TRUE : Boolean.FALSE);
-    }
-    catch (IOException e) {
-      throw new RuntimeException(e);
-    }
+    record.put(key, mavenFacet.exists(tocheck));
   }
 
   /**
@@ -495,47 +508,6 @@ public final class MavenIndexPublisher
     @Override
     public boolean apply(final Record input) {
       return allowedTypes.contains(input.getType());
-    }
-  }
-
-  /**
-   * Memory conservative "uniqueness filter" that filters MI keys (UINFO), allowing one uinfo at the time. MI index
-   * is unique by UINFO composite field, and this predicate filters it as such.
-   */
-  private static class UniqueFilter
-      implements Predicate<Record>
-  {
-    /**
-     * G->A->V->Set(CE), just to check for uniqueness.
-     */
-    private Map<String, Map<String, Map<String, Set<String>>>> gavce = new HashMap<>();
-
-    @Override
-    public boolean apply(final Record input) {
-      String g = input.get(Record.GROUP_ID);
-      String a = input.get(Record.ARTIFACT_ID);
-      String v = input.get(Record.VERSION);
-      String ce = defStr(input.get(Record.CLASSIFIER), "n/a") + ":" + input.get(Record.FILE_EXTENSION);
-      // G
-      Map<String, Map<String, Set<String>>> gMap = gavce.get(g);
-      if (gMap == null) {
-        gMap = new HashMap<>();
-        gavce.put(g, gMap);
-      }
-      // A
-      Map<String, Set<String>> aMap = gMap.get(a);
-      if (aMap == null) {
-        aMap = new HashMap<>();
-        gMap.put(a, aMap);
-      }
-      // V
-      Set<String> vSet = aMap.get(v);
-      if (vSet == null) {
-        vSet = new HashSet<>();
-        aMap.put(v, vSet);
-      }
-      // CE
-      return vSet.add(ce);
     }
   }
 
