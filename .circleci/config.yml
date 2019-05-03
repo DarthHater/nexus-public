@@ -12,7 +12,7 @@ jobs:
           name: Get project version
           command: |
             echo 'export PROJECT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)' >> $BASH_ENV
-      - run: mvn -U clean package
+      - run: mvn -U clean install
       - run:
           name: Save test results
           command: |
