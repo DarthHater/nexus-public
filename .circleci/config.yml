@@ -8,10 +8,6 @@ jobs:
       MAVEN_OPTS: -Xmx3200m
     steps:
       - checkout
-      - run:
-          name: Get project version
-          command: |
-            echo 'export PROJECT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)' >> $BASH_ENV
       - run: mvn -U clean install
       - run:
           name: Save test results
@@ -23,10 +19,3 @@ jobs:
           path: ~/test-results
       - store_artifacts:
           path: ~/test-results/junit
-      - run:
-          name: Prep artifacts
-          command: |
-            mkdir /tmp/artifacts && \
-            cp /home/circleci/nexus-public/target/nexus-public-* /tmp/artifacts
-      - store_artifacts:
-          path: /tmp/artifacts
